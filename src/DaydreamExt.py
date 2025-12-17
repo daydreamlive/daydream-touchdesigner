@@ -12,6 +12,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 VERSION = "0.1.0"
 
+PUBLIC_CONTRACT = {
+    'extension_name': 'Daydream',
+    'lifecycle_methods': ['Login', 'Start', 'Stop', 'ResetParameters'],
+    'state_properties': ['state', 'Active', 'IsLoggedIn', 'ApiToken', 'stream_id', 'whip_url', 'whep_url'],
+    'states': ['IDLE', 'CREATING', 'STREAMING', 'ERROR'],
+    'required_operators': ['web_server', 'web_server_sdp', 'web_server_auth', 'web_render', 'stream_source', 'frame_timer'],
+}
+
 
 class IPv4HTTPConnection(http.client.HTTPConnection):
     def connect(self):
@@ -978,6 +986,17 @@ class DaydreamExt:
     @property
     def IsLoggedIn(self):
         return bool(self._api_key)
+
+    def GetCapabilities(self):
+        model = self.Model
+        return {
+            'backend': 'daydream',
+            'version': VERSION,
+            'model': model,
+            'supported_models': list(CONTROLNET_SUPPORT.keys()),
+            'controlnets': list(CONTROLNET_SUPPORT.get(model, {}).keys()),
+            'ip_adapter_types': list(IP_ADAPTER_SUPPORT.get(model, set())),
+        }
 
     def _allocate_ports(self):
         ports = []
