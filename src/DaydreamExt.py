@@ -254,7 +254,7 @@ class DaydreamAPI:
 class ParameterManager:
     def __init__(self, owner_comp):
         self.ownerComp = owner_comp
-        self._style_image_cache = {'source': None, 'data': None}
+        self._style_image_cache = {'source': None, 'signature': None, 'data': None}
 
     def _get(self, name, default=None):
         if hasattr(self.ownerComp.par, name):
@@ -603,25 +603,27 @@ class ParameterManager:
     def get_style_image_source(self):
         value = self.Styleimage
         if not value:
-            self._style_image_cache = {'source': None, 'data': None}
+            self._style_image_cache = {'source': None, 'signature': None, 'data': None}
             return None
         if value.startswith('http://') or value.startswith('https://'):
             return value
-        if self._style_image_cache['source'] == value and self._style_image_cache['data']:
-            return self._style_image_cache['data']
         style_top = op(value)
-        if style_top and hasattr(style_top, 'saveByteArray') and style_top.width > 0:
-            jpeg_data = bytes(style_top.saveByteArray('.jpg', quality=0.85))
-            if len(jpeg_data) > 50 * 1024 * 1024:
-                print("Daydream Warning: Style image too large (>50MB)")
-                return None
-            data_url = f"data:image/jpeg;base64,{base64.b64encode(jpeg_data).decode('ascii')}"
-            self._style_image_cache = {'source': value, 'data': data_url}
-            return data_url
-        return None
+        if not style_top or not hasattr(style_top, 'saveByteArray') or style_top.width == 0:
+            return None
+        signature = (style_top.width, style_top.height, style_top.time.frame)
+        cached = self._style_image_cache
+        if cached.get('source') == value and cached.get('signature') == signature and cached.get('data'):
+            return cached['data']
+        jpeg_data = style_top.saveByteArray('.jpg', quality=0.85)
+        if len(jpeg_data) > 50 * 1024 * 1024:
+            print("Daydream Warning: Style image too large (>50MB)")
+            return None
+        data_url = f"data:image/jpeg;base64,{base64.b64encode(jpeg_data).decode('ascii')}"
+        self._style_image_cache = {'source': value, 'signature': signature, 'data': data_url}
+        return data_url
 
     def invalidate_style_cache(self):
-        self._style_image_cache = {'source': None, 'data': None}
+        self._style_image_cache = {'source': None, 'signature': None, 'data': None}
 
     def build_controlnets(self):
         model = self.Model
@@ -1491,7 +1493,7 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
         let whipPC = null, whepPC = null;
         let ws = null;
         let latestFrame = null;
-        let decoding = false;
+        let pendingDecode = null;
         let videoStarted = false;
         let whipStarted = false;
         let canvasStream = null;
@@ -1603,23 +1605,24 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
             return lines.join('\\r\\n');
         }
 
-        async function decodeLoop() {
-            if (decoding || !latestFrame) return;
-            decoding = true;
-            while (latestFrame) {
-                const frame = latestFrame;
-                latestFrame = null;
-                try {
-                    const bitmap = await createImageBitmap(new Blob([frame], { type: 'image/jpeg' }));
+        function decodeLoop() {
+            if (!latestFrame || pendingDecode) return;
+            const frame = latestFrame;
+            latestFrame = null;
+            pendingDecode = createImageBitmap(new Blob([frame], { type: 'image/jpeg' }))
+                .then(bitmap => {
                     if (useBitmapRenderer) {
                         ctx.transferFromImageBitmap(bitmap);
                     } else {
                         ctx2d.drawImage(bitmap, 0, 0, 512, 512);
                         bitmap.close();
                     }
-                } catch {}
-            }
-            decoding = false;
+                })
+                .catch(() => {})
+                .finally(() => {
+                    pendingDecode = null;
+                    if (latestFrame) decodeLoop();
+                });
         }
 
         function connectWebSocket() {

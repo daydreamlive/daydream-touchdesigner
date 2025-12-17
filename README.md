@@ -31,8 +31,6 @@ Real-time AI image generation for TouchDesigner with Daydream
 
 ## Integration API
 
-For developers building wrapper plugins or integrating Daydream as a submodule.
-
 ### Public Contract
 
 The extension exposes `PUBLIC_CONTRACT` with introspectable metadata:
