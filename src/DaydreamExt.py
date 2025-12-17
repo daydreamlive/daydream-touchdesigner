@@ -722,8 +722,6 @@ class HTTPHandler:
         else:
             if path == '/relay.html' and method == 'GET':
                 self._handle_relay_html(response)
-            elif path == '/frame.jpg' and method == 'GET':
-                self._handle_frame_request(response)
             elif path == '/status' and method == 'GET':
                 self._handle_status_request(response)
             else:
@@ -740,23 +738,6 @@ class HTTPHandler:
         response['statusReason'] = 'OK'
         response['content-type'] = 'text/html; charset=utf-8'
         response['data'] = self.ext._get_relay_html()
-
-    def _handle_frame_request(self, response):
-        stream_source = self.ext.ownerComp.op('stream_source')
-        if not stream_source:
-            response['statusCode'] = 500
-            response['data'] = b'No video input'
-            return
-        try:
-            jpeg_data = stream_source.saveByteArray('.jpg', quality=0.85)
-            response['statusCode'] = 200
-            response['statusReason'] = 'OK'
-            response['content-type'] = 'image/jpeg'
-            response['data'] = bytes(jpeg_data)
-        except Exception as e:
-            print(f"Daydream: Frame capture error: {e}")
-            response['statusCode'] = 500
-            response['data'] = str(e).encode()
 
     def _handle_status_request(self, response):
         status = {
