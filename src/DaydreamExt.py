@@ -10,7 +10,7 @@ import webbrowser
 import base64
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 PUBLIC_CONTRACT = {
     'extension_name': 'Daydream',
@@ -18,6 +18,15 @@ PUBLIC_CONTRACT = {
     'state_properties': ['state', 'Active', 'IsLoggedIn', 'ApiToken', 'stream_id', 'whip_url', 'whep_url'],
     'states': ['IDLE', 'CREATING', 'STREAMING', 'ERROR'],
     'required_operators': ['web_server', 'web_server_sdp', 'web_server_auth', 'web_render', 'stream_source', 'frame_timer'],
+    'listener_api': ['register_listener', 'unregister_listener'],
+    'events': [
+        'initialized',
+        'login_started', 'login_success', 'login_failed',
+        'stream_create_started', 'stream_created', 'stream_create_failed',
+        'streaming_started', 'streaming_stopped',
+        'params_update_scheduled', 'params_update_sent', 'params_update_result',
+        'state_changed', 'error',
+    ],
 }
 
 
@@ -889,15 +898,21 @@ class HTTPHandler:
         token = params.get('token')
         state = params.get('state')
         if not token:
+            err = "No token received"
             response['statusCode'] = 400
             response['content-type'] = 'text/html; charset=utf-8'
-            response['data'] = b'<html><body><h1>Error: No token received</h1></body></html>'
+            response['data'] = f'<html><body><h1>Error: {err}</h1></body></html>'.encode('utf-8')
+            self.ext._emit('login_failed', {'error': err})
+            self.ext._emit('error', {'error': err, 'context': 'login'})
             return
         if state != self.ext._auth_state:
+            err = "Invalid state parameter"
             response['statusCode'] = 400
             response['content-type'] = 'text/html; charset=utf-8'
-            response['data'] = b'<html><body><h1>Error: Invalid state parameter</h1></body></html>'
+            response['data'] = f'<html><body><h1>Error: {err}</h1></body></html>'.encode('utf-8')
             self.ext._auth_pending = False
+            self.ext._emit('login_failed', {'error': err})
+            self.ext._emit('error', {'error': err, 'context': 'login'})
             return
         try:
             api_key = self.ext.api.create_api_key(token)
@@ -912,10 +927,13 @@ class HTTPHandler:
             response['Location'] = 'https://app.daydream.monster/sign-in/local/success'
             response['data'] = b''
         except Exception as e:
-            print(f"Daydream: Login failed: {e}")
+            err = str(e)
+            print(f"Daydream: Login failed: {err}")
             response['statusCode'] = 500
             response['content-type'] = 'text/html; charset=utf-8'
-            response['data'] = f'<html><body><h1>Error: {str(e)}</h1></body></html>'.encode('utf-8')
+            response['data'] = f'<html><body><h1>Error: {err}</h1></body></html>'.encode('utf-8')
+            self.ext._emit('login_failed', {'error': err})
+            self.ext._emit('error', {'error': err, 'context': 'login'})
         finally:
             self.ext._auth_pending = False
             self.ext._auth_state = None
@@ -930,6 +948,7 @@ class DaydreamExt:
         self.params = ParameterManager(ownerComp)
         self.http = HTTPHandler(self)
 
+        self._listeners = []
         self.state = "IDLE"
         self.stream_id = None
         self.model_id = None
@@ -967,6 +986,8 @@ class DaydreamExt:
             print(f"DaydreamExt v{VERSION} initialized (Logged in)")
         else:
             print(f"DaydreamExt v{VERSION} initialized (Not logged in - click Login)")
+
+        self._emit('initialized', {'logged_in': self.IsLoggedIn})
     @property
     def Prompt(self):
         return self.params.Prompt
@@ -986,6 +1007,38 @@ class DaydreamExt:
     @property
     def IsLoggedIn(self):
         return bool(self._api_key)
+
+    def register_listener(self, fn):
+        if callable(fn) and fn not in self._listeners:
+            self._listeners.append(fn)
+
+    def unregister_listener(self, fn):
+        if fn in self._listeners:
+            self._listeners.remove(fn)
+
+    def _emit(self, event, payload=None):
+        if payload is None:
+            payload = {}
+        payload['owner_path'] = self.ownerComp.path
+        payload['state'] = self.state
+        payload['stream_id'] = self.stream_id
+        for listener in self._listeners:
+            try:
+                listener(event, payload)
+            except Exception as e:
+                print(f"Daydream: Listener error on '{event}': {e}")
+
+    def _set_state(self, new_state, reason=None, error=None):
+        old_state = self.state
+        if old_state == new_state:
+            return
+        self.state = new_state
+        payload = {'from': old_state, 'to': new_state}
+        if reason:
+            payload['reason'] = reason
+        if error:
+            payload['error'] = str(error)
+        self._emit('state_changed', payload)
 
     def GetCapabilities(self):
         model = self.Model
@@ -1039,13 +1092,14 @@ class DaydreamExt:
     def _onLoginSuccess(self):
         self.params.update_states(True)
         print("Daydream: Login successful, ready to stream")
+        self._emit('login_success', {})
 
-    def _resetStreamState(self):
+    def _resetStreamState(self, reason=None):
         self.stream_id = None
         self.whip_url = None
         self.model_id = None
         self.whep_url = None
-        self.state = "IDLE"
+        self._set_state("IDLE", reason=reason or "reset")
 
     def ResetParameters(self):
         self.params.reset()
@@ -1066,17 +1120,22 @@ class DaydreamExt:
         self._auth_pending = True
         auth_url = f"https://app.daydream.live/sign-in/local?port={self.auth_port}&state={self._auth_state}"
         print(f"Daydream: Opening browser for login: {auth_url}")
+        self._emit('login_started', {'auth_port': self.auth_port})
         webbrowser.open(auth_url)
 
     def Start(self):
         if not self.ApiToken:
-            print("Daydream Error: Not logged in. Please click Login first.")
-            self.state = "ERROR"
+            err = "Not logged in. Please click Login first."
+            print(f"Daydream Error: {err}")
+            self._set_state("ERROR", reason="start_failed", error=err)
+            self._emit('error', {'error': err, 'context': 'start'})
             return
         self._stream_source = self.ownerComp.op('stream_source')
         if not self._stream_source or self._stream_source.width == 0 or self._stream_source.height == 0:
-            print("Daydream Error: No input connected to stream_source.")
-            self.state = "ERROR"
+            err = "No input connected to stream_source."
+            print(f"Daydream Error: {err}")
+            self._set_state("ERROR", reason="start_failed", error=err)
+            self._emit('error', {'error': err, 'context': 'start'})
             return
         if self.state == "CREATING":
             print("Daydream: Stream is being created, please wait...")
@@ -1090,6 +1149,8 @@ class DaydreamExt:
 
     def Stop(self):
         print("Daydream: Stopping...")
+        was_streaming = self.state == "STREAMING"
+        prev_stream_id = self.stream_id
         frame_timer = self.ownerComp.op('frame_timer')
         if frame_timer:
             frame_timer.par.active = 0
@@ -1110,9 +1171,11 @@ class DaydreamExt:
             web_render.par.url = 'about:blank'
         self._stream_source = None
         self._web_server = None
-        self._resetStreamState()
+        self._resetStreamState(reason="stop")
         self.params.update_cold_states(False)
         self.UpdateStatusText("Idle")
+        if was_streaming:
+            self._emit('streaming_stopped', {'prev_stream_id': prev_stream_id})
 
     def _warmupWebRender(self):
         web_render = self.ownerComp.op('web_render')
@@ -1165,11 +1228,11 @@ class DaydreamExt:
             print("Daydream Error: Not logged in")
             return
         print("Daydream: Creating stream...")
-        self.state = "CREATING"
+        self._set_state("CREATING", reason="stream_create")
+        self._emit('stream_create_started', {'model': self.params.Model})
         self.UpdateStatusText("Creating stream...")
         self.api.set_token(self.ApiToken)
         params = self.params.build_params(for_update=False)
-        print(f"Daydream: Creating stream with params: {params}")
         self._start_params = {
             "model": self.params.Model,
             "params": params,
@@ -1197,29 +1260,42 @@ class DaydreamExt:
         print(f"Daydream: Stream Created. ID: {self.stream_id}")
         print(f"Daydream: WHIP URL: {self.whip_url}")
         print(f"Daydream: Model: {self.model_id}")
+        self._emit('stream_created', {
+            'whip_url': self.whip_url,
+            'model_id': self.model_id,
+        })
         if self.Active:
             self._startWebRTC()
         else:
-            self._resetStreamState()
+            self._resetStreamState(reason="active_toggled_off")
             self.UpdateStatusText("Idle")
 
     def _onStreamCreateError(self):
-        print(f"Daydream Error: Failed to create stream. {self._pending_error}")
-        self._resetStreamState()
-        self.state = "ERROR"
-        self.UpdateStatusText(f"Error: {self._pending_error}")
+        err = self._pending_error
+        print(f"Daydream Error: Failed to create stream. {err}")
+        self._resetStreamState(reason="stream_create_failed")
+        self._set_state("ERROR", reason="stream_create_failed", error=err)
+        self._emit('stream_create_failed', {'error': err})
+        self._emit('error', {'error': err, 'context': 'stream_create'})
+        self.UpdateStatusText(f"Error: {err}")
         if hasattr(self.ownerComp.par, 'Active'):
             self.ownerComp.par.Active.val = False
 
     def _onWhipFailed(self):
         print("Daydream: WHIP failed, recreating stream...")
-        self._resetStreamState()
+        self._emit('error', {'error': 'WHIP connection failed', 'context': 'whip', 'will_retry': self.Active})
+        self._resetStreamState(reason="whip_failed")
         if self.Active:
             self._createStream()
 
     def _startWebRTC(self):
         print("Daydream: Stream ready, WebRTC can connect...")
-        self.state = "STREAMING"
+        self._set_state("STREAMING", reason="webrtc_ready")
+        self._emit('streaming_started', {
+            'whip_url': self.whip_url,
+            'whep_url': self.whep_url,
+            'model_id': self.model_id,
+        })
         self.UpdateStatusText(f"Streaming: {self.stream_id}")
 
     def OnWebSocketOpen(self, client, uri):
@@ -1257,10 +1333,20 @@ class DaydreamExt:
 
     def _scheduleParamsUpdate(self, par_name):
         self._pending_changes.add(par_name)
+        self._emit('params_update_scheduled', {'param': par_name, 'pending': list(self._pending_changes)})
         if self._params_update_scheduled:
             return
         self._params_update_scheduled = True
         run(f"op('{self.ownerComp.path}').ext.Daydream._doParamsUpdate()", delayMilliSeconds=100)
+
+    def _sanitize_params_for_emit(self, params):
+        sanitized = dict(params)
+        if 'ip_adapter_style_image_url' in sanitized:
+            val = sanitized['ip_adapter_style_image_url']
+            sanitized['has_style_image'] = bool(val)
+            if val and val.startswith('data:'):
+                sanitized['ip_adapter_style_image_url'] = '<data_url_omitted>'
+        return sanitized
 
     def _doParamsUpdate(self):
         self._params_update_scheduled = False
@@ -1275,14 +1361,28 @@ class DaydreamExt:
             return
         stream_id = self.stream_id
         model_id = self.model_id
-        print(f"Daydream: Updating params (changed: {changed}): {params}")
+        sanitized = self._sanitize_params_for_emit(params)
+        print(f"Daydream: Updating params (changed: {changed}): {sanitized}")
+        self._emit('params_update_sent', {'changed': list(changed), 'params': sanitized})
         api = self.api
+        owner_path = self.ownerComp.path
         def update_async():
+            error = None
             try:
                 api.update_stream(stream_id, model_id=model_id, **params)
             except Exception as e:
+                error = str(e)
                 print(f"Daydream Warning: Update failed. {e}")
+            run(f"op('{owner_path}').ext.Daydream._onParamsUpdateResult({repr(error)})", delayFrames=1)
         self._executor.submit(update_async)
+
+    def _onParamsUpdateResult(self, error):
+        payload = {'success': error is None}
+        if error:
+            payload['error'] = error
+        self._emit('params_update_result', payload)
+        if error:
+            self._emit('error', {'error': error, 'context': 'params_update'})
 
     def UpdateStatusText(self, text):
         text_op = self.ownerComp.op('text_overlay')
