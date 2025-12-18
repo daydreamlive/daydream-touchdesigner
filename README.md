@@ -2,6 +2,8 @@
 
 Real-time AI image generation for TouchDesigner with Daydream
 
+![Daydream TouchDesigner](assets/hero.png)
+
 ## Features
 
 - **Real-time streaming** via WebRTC (WHIP/WHEP)
