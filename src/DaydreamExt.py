@@ -10,7 +10,7 @@ import webbrowser
 import base64
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 
 PUBLIC_CONTRACT = {
     'extension_name': 'Daydream',
@@ -179,7 +179,8 @@ class DaydreamAPI:
             raise ValueError("API Token is not set")
         return {
             "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "x-client-source": "touchdesigner",
         }
 
     def create_stream(self, model_id="stabilityai/sdxl-turbo", **params):
@@ -240,7 +241,7 @@ class DaydreamAPI:
         url = f"{self.BASE_URL}/api-key"
         payload = {"name": name, "user_type": user_type}
         data = json.dumps(payload).encode('utf-8')
-        headers = {"Authorization": f"Bearer {jwt_token}", "Content-Type": "application/json"}
+        headers = {"Authorization": f"Bearer {jwt_token}", "Content-Type": "application/json", "x-client-source": "touchdesigner"}
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
             with self._opener.open(req, timeout=10) as resp:
