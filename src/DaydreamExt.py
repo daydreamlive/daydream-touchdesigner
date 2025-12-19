@@ -381,6 +381,12 @@ class ParameterManager:
         self._ensure_missing_params(params_page)
 
     def _ensure_missing_control_params(self, page):
+        if not hasattr(self.ownerComp.par, 'Version'):
+            p = page.appendStr('Version', label='Version')[0]
+            p.default = p.val = VERSION
+            p.readOnly = True
+        else:
+            self.ownerComp.par.Version.val = VERSION
         if not hasattr(self.ownerComp.par, 'Login'):
             page.appendPulse('Login', label='Login')
         if not hasattr(self.ownerComp.par, 'Active'):
@@ -430,6 +436,9 @@ class ParameterManager:
 
     def create_all(self):
         daydream = self.ownerComp.appendCustomPage('Daydream')
+        p = daydream.appendStr('Version', label='Version')[0]
+        p.default = p.val = VERSION
+        p.readOnly = True
         daydream.appendHeader('Controls')
         daydream.appendPulse('Login', label='Login')
         p = daydream.appendToggle('Active', label='Active')[0]
