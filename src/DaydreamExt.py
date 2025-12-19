@@ -10,7 +10,7 @@ import webbrowser
 import base64
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 
 PUBLIC_CONTRACT = {
     'extension_name': 'Daydream',
@@ -908,7 +908,7 @@ class HTTPHandler:
             self.ext._emit('login_failed', {'error': err})
             self.ext._emit('error', {'error': err, 'context': 'login'})
             return
-        if state != self.ext._auth_state:
+        if not self.ext._consume_auth_state(state):
             err = "Invalid state parameter"
             response['statusCode'] = 400
             response['content-type'] = 'text/html; charset=utf-8'
@@ -939,11 +939,12 @@ class HTTPHandler:
             self.ext._emit('error', {'error': err, 'context': 'login'})
         finally:
             self.ext._auth_pending = False
-            self.ext._auth_state = None
 
 
 class DaydreamExt:
     CREDENTIALS_PATH = os.path.expanduser("~/.daydream/credentials")
+    AUTH_STATES_PATH = os.path.expanduser("~/.daydream/auth_states.json")
+    AUTH_STATE_TTL = 300
 
     def __init__(self, ownerComp):
         self.ownerComp = ownerComp
@@ -1092,6 +1093,45 @@ class DaydreamExt:
         except Exception as e:
             print(f"Daydream: Failed to save credentials: {e}")
 
+    def _load_auth_states(self):
+        import time
+        if not os.path.exists(self.AUTH_STATES_PATH):
+            return {}
+        try:
+            with open(self.AUTH_STATES_PATH, 'r') as f:
+                data = json.load(f)
+            states = data.get('states', {})
+            now = time.time()
+            return {s: t for s, t in states.items() if now - t < self.AUTH_STATE_TTL}
+        except Exception:
+            return {}
+
+    def _save_auth_states(self, states):
+        auth_dir = os.path.dirname(self.AUTH_STATES_PATH)
+        if not os.path.exists(auth_dir):
+            os.makedirs(auth_dir)
+        try:
+            with open(self.AUTH_STATES_PATH, 'w') as f:
+                json.dump({'states': states}, f)
+        except Exception as e:
+            print(f"Daydream: Failed to save auth states: {e}")
+
+    def _add_auth_state(self, state):
+        import time
+        states = self._load_auth_states()
+        states[state] = time.time()
+        self._save_auth_states(states)
+
+    def _consume_auth_state(self, state):
+        if not state:
+            return False
+        states = self._load_auth_states()
+        if state not in states:
+            return False
+        del states[state]
+        self._save_auth_states(states)
+        return True
+
     def _onLoginSuccess(self):
         self.params.update_states(True)
         print("Daydream: Login successful, ready to stream")
@@ -1120,6 +1160,7 @@ class DaydreamExt:
 
     def Login(self):
         self._auth_state = secrets.token_urlsafe(16)
+        self._add_auth_state(self._auth_state)
         self._auth_pending = True
         auth_url = f"https://app.daydream.live/sign-in/local?port={self.auth_port}&state={self._auth_state}"
         print(f"Daydream: Opening browser for login: {auth_url}")
