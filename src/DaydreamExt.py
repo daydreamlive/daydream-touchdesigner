@@ -936,7 +936,7 @@ class HTTPHandler:
             run(f"op('{self.ext.ownerComp.path}').ext.Daydream._onLoginSuccess()", delayFrames=1)
             response['statusCode'] = 302
             response['statusReason'] = 'Found'
-            response['Location'] = 'https://app.daydream.monster/sign-in/local/success'
+            response['Location'] = 'https://app.daydream.live/sign-in/local/success'
             response['data'] = b''
         except Exception as e:
             err = str(e)
