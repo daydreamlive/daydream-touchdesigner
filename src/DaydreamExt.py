@@ -13,6 +13,20 @@ import threading
 
 VERSION = "0.1.3"
 
+API_TIMEOUT_CREATE = 15
+API_TIMEOUT_UPDATE = 10
+API_TIMEOUT_SDP = 5
+API_TIMEOUT_WHIP = 10
+API_TIMEOUT_WHEP = 5
+
+JPEG_QUALITY_STYLE = 0.85
+JPEG_QUALITY_STREAM = 0.7
+
+MAX_STYLE_IMAGE_SIZE = 50 * 1024 * 1024
+
+EXECUTOR_MAX_WORKERS = 4
+PARAMS_UPDATE_DELAY_MS = 100
+
 PUBLIC_CONTRACT = {
     'extension_name': 'Daydream',
     'lifecycle_methods': ['Login', 'Start', 'Stop', 'ResetParameters', 'Destroy'],
@@ -193,7 +207,7 @@ class DaydreamAPI:
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(url, data=data, headers=self._get_headers(), method="POST")
         try:
-            with self._opener.open(req, timeout=15) as resp:
+            with self._opener.open(req, timeout=API_TIMEOUT_CREATE) as resp:
                 response_data = json.loads(resp.read().decode('utf-8'))
                 print(f"API: Stream created successfully. ID: {response_data.get('id')}")
                 return response_data
@@ -217,13 +231,13 @@ class DaydreamAPI:
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(url, data=data, headers=self._get_headers(), method="PATCH")
         try:
-            with self._opener.open(req, timeout=10) as resp:
+            with self._opener.open(req, timeout=API_TIMEOUT_UPDATE) as resp:
                 return True
         except Exception as e:
             print(f"API Update Error: {e}")
             return False
 
-    def exchange_sdp(self, url, offer_sdp, token=None, timeout=5):
+    def exchange_sdp(self, url, offer_sdp, token=None, timeout=API_TIMEOUT_SDP):
         headers = {"Content-Type": "application/sdp"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -245,7 +259,7 @@ class DaydreamAPI:
         headers = {"Authorization": f"Bearer {jwt_token}", "Content-Type": "application/json", "x-client-source": "touchdesigner"}
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
-            with self._opener.open(req, timeout=10) as resp:
+            with self._opener.open(req, timeout=API_TIMEOUT_UPDATE) as resp:
                 return json.loads(resp.read().decode('utf-8')).get('apiKey')
         except urllib.error.HTTPError as e:
             err_body = e.read().decode()
@@ -625,8 +639,8 @@ class ParameterManager:
         cached = self._style_image_cache
         if cached.get('source') == value and cached.get('signature') == signature and cached.get('data'):
             return cached['data']
-        jpeg_data = style_top.saveByteArray('.jpg', quality=0.85)
-        if len(jpeg_data) > 50 * 1024 * 1024:
+        jpeg_data = style_top.saveByteArray('.jpg', quality=JPEG_QUALITY_STYLE)
+        if len(jpeg_data) > MAX_STYLE_IMAGE_SIZE:
             print("Daydream Warning: Style image too large (>50MB)")
             return None
         data_url = f"data:image/jpeg;base64,{base64.b64encode(jpeg_data).decode('ascii')}"
@@ -805,7 +819,7 @@ class HTTPHandler:
             if not req_data:
                 return
             try:
-                answer_sdp, headers = ext.api.exchange_sdp(req_data['whip_url'], req_data['offer'], req_data['token'], timeout=10)
+                answer_sdp, headers = ext.api.exchange_sdp(req_data['whip_url'], req_data['offer'], req_data['token'], timeout=API_TIMEOUT_WHIP)
                 for k, v in headers.items():
                     if k.lower() == 'livepeer-playback-url':
                         ext.whep_url = v
@@ -877,7 +891,7 @@ class HTTPHandler:
             if not req_data:
                 return
             try:
-                answer_sdp, _ = ext.api.exchange_sdp(req_data['whep_url'], req_data['offer'], timeout=5)
+                answer_sdp, _ = ext.api.exchange_sdp(req_data['whep_url'], req_data['offer'], timeout=API_TIMEOUT_WHEP)
                 with ext._whep_lock:
                     req_data['answer'] = answer_sdp
                     req_data['status'] = 'ready'
@@ -997,7 +1011,7 @@ class DaydreamExt:
         self._stream_source = None
         self._web_server = None
 
-        self._executor = ThreadPoolExecutor(max_workers=4)
+        self._executor = ThreadPoolExecutor(max_workers=EXECUTOR_MAX_WORKERS)
         self._relay_html_cache = None
         self._pending_changes = set()
         self._params_update_scheduled = False
@@ -1394,7 +1408,7 @@ class DaydreamExt:
         if not stream_source or not web_server:
             return
         try:
-            jpeg_data = stream_source.saveByteArray('.jpg', quality=0.7)
+            jpeg_data = stream_source.saveByteArray('.jpg', quality=JPEG_QUALITY_STREAM)
             dead_clients = []
             for client in clients_snapshot:
                 try:
@@ -1417,7 +1431,7 @@ class DaydreamExt:
         if self._params_update_scheduled:
             return
         self._params_update_scheduled = True
-        run(f"op('{self.ownerComp.path}').ext.Daydream._doParamsUpdate()", delayMilliSeconds=100)
+        run(f"op('{self.ownerComp.path}').ext.Daydream._doParamsUpdate()", delayMilliSeconds=PARAMS_UPDATE_DELAY_MS)
 
     def _sanitize_params_for_emit(self, params):
         sanitized = dict(params)
