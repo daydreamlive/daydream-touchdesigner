@@ -14,7 +14,7 @@ VERSION = "0.1.3"
 
 PUBLIC_CONTRACT = {
     'extension_name': 'Daydream',
-    'lifecycle_methods': ['Login', 'Start', 'Stop', 'ResetParameters'],
+    'lifecycle_methods': ['Login', 'Start', 'Stop', 'ResetParameters', 'Destroy'],
     'state_properties': ['state', 'Active', 'IsLoggedIn', 'ApiToken', 'stream_id', 'whip_url', 'whep_url'],
     'states': ['IDLE', 'CREATING', 'STREAMING', 'ERROR'],
     'required_operators': ['web_server', 'web_server_sdp', 'web_server_auth', 'web_render', 'stream_source', 'frame_timer'],
@@ -1476,6 +1476,9 @@ class DaydreamExt:
 
     def Message(self, msg):
         print(f"Daydream Message: {msg}")
+
+    def Destroy(self):
+        self._executor.shutdown(wait=False)
 
 
 RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
