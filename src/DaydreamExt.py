@@ -45,40 +45,32 @@ PUBLIC_CONTRACT = {
 }
 
 
+def _create_ipv4_socket(host, port, timeout):
+    sock = None
+    for res in socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM):
+        af, socktype, proto, canonname, sa = res
+        try:
+            sock = socket.socket(af, socktype, proto)
+            sock.settimeout(timeout)
+            sock.connect(sa)
+            return sock
+        except OSError:
+            if sock:
+                sock.close()
+            sock = None
+    raise OSError(f"Failed to connect to {host}:{port} via IPv4")
+
+
 class IPv4HTTPConnection(http.client.HTTPConnection):
     def connect(self):
-        for res in socket.getaddrinfo(self.host, self.port, socket.AF_INET, socket.SOCK_STREAM):
-            af, socktype, proto, canonname, sa = res
-            try:
-                self.sock = socket.socket(af, socktype, proto)
-                self.sock.settimeout(self.timeout)
-                self.sock.connect(sa)
-                break
-            except OSError:
-                if self.sock:
-                    self.sock.close()
-                    self.sock = None
-        if self.sock is None:
-            raise OSError(f"Failed to connect to {self.host}:{self.port} via IPv4")
+        self.sock = _create_ipv4_socket(self.host, self.port, self.timeout)
         if self._tunnel_host:
             self._tunnel()
 
 
 class IPv4HTTPSConnection(http.client.HTTPSConnection):
     def connect(self):
-        for res in socket.getaddrinfo(self.host, self.port, socket.AF_INET, socket.SOCK_STREAM):
-            af, socktype, proto, canonname, sa = res
-            try:
-                sock = socket.socket(af, socktype, proto)
-                sock.settimeout(self.timeout)
-                sock.connect(sa)
-                break
-            except OSError:
-                if sock:
-                    sock.close()
-                sock = None
-        if sock is None:
-            raise OSError(f"Failed to connect to {self.host}:{self.port} via IPv4")
+        sock = _create_ipv4_socket(self.host, self.port, self.timeout)
         if self._tunnel_host:
             self.sock = sock
             self._tunnel()
@@ -847,10 +839,9 @@ class HTTPHandler:
         response['content-type'] = 'application/json'
         response['data'] = json.dumps({'id': request_id}).encode('utf-8')
 
-    def _handle_whip_result(self, response, path):
-        request_id = path.split('/whip/result/')[-1]
-        with self.ext._whip_lock:
-            req_data = self.ext._whip_requests.get(request_id)
+    def _handle_sdp_result(self, response, request_id, lock, requests_dict):
+        with lock:
+            req_data = requests_dict.get(request_id)
             if not req_data:
                 response['statusCode'] = 404
                 response['data'] = b'Request not found'
@@ -863,11 +854,15 @@ class HTTPHandler:
                 response['statusCode'] = 200
                 response['content-type'] = 'application/sdp'
                 response['data'] = req_data['answer'].encode('utf-8')
-                del self.ext._whip_requests[request_id]
+                del requests_dict[request_id]
             else:
                 response['statusCode'] = 500
                 response['data'] = (req_data['error'] or 'Unknown error').encode('utf-8')
-                del self.ext._whip_requests[request_id]
+                del requests_dict[request_id]
+
+    def _handle_whip_result(self, response, path):
+        request_id = path.split('/whip/result/')[-1]
+        self._handle_sdp_result(response, request_id, self.ext._whip_lock, self.ext._whip_requests)
 
     def _handle_whep_proxy(self, request, response):
         if not self.ext.whep_url:
@@ -911,25 +906,7 @@ class HTTPHandler:
 
     def _handle_whep_result(self, response, path):
         request_id = path.split('/whep/result/')[-1]
-        with self.ext._whep_lock:
-            req_data = self.ext._whep_requests.get(request_id)
-            if not req_data:
-                response['statusCode'] = 404
-                response['data'] = b'Request not found'
-                return
-            if req_data['status'] == 'pending':
-                response['statusCode'] = 202
-                response['content-type'] = 'application/json'
-                response['data'] = json.dumps({'status': 'pending'}).encode('utf-8')
-            elif req_data['status'] == 'ready':
-                response['statusCode'] = 200
-                response['content-type'] = 'application/sdp'
-                response['data'] = req_data['answer'].encode('utf-8')
-                del self.ext._whep_requests[request_id]
-            else:
-                response['statusCode'] = 500
-                response['data'] = (req_data['error'] or 'Unknown error').encode('utf-8')
-                del self.ext._whep_requests[request_id]
+        self._handle_sdp_result(response, request_id, self.ext._whep_lock, self.ext._whep_requests)
 
     def _handle_auth_callback(self, request, response):
         params = request.get('pars', {})
