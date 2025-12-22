@@ -9,6 +9,7 @@ import socket
 import webbrowser
 import base64
 from concurrent.futures import ThreadPoolExecutor
+import threading
 
 VERSION = "0.1.3"
 
@@ -788,17 +789,19 @@ class HTTPHandler:
         request_id = secrets.token_urlsafe(8)
         print(f"Daydream: WHIP proxy - forwarding offer to {self.ext.whip_url}")
         owner_path = self.ext.ownerComp.path
-        self.ext._whip_requests[request_id] = {
-            'status': 'pending',
-            'offer': offer_sdp,
-            'answer': None,
-            'error': None,
-            'whip_url': self.ext.whip_url,
-            'token': self.ext.ApiToken
-        }
         ext = self.ext
+        with ext._whip_lock:
+            ext._whip_requests[request_id] = {
+                'status': 'pending',
+                'offer': offer_sdp,
+                'answer': None,
+                'error': None,
+                'whip_url': self.ext.whip_url,
+                'token': self.ext.ApiToken
+            }
         def exchange_async():
-            req_data = ext._whip_requests.get(request_id)
+            with ext._whip_lock:
+                req_data = ext._whip_requests.get(request_id)
             if not req_data:
                 return
             try:
@@ -808,18 +811,21 @@ class HTTPHandler:
                         ext.whep_url = v
                         print(f"Daydream: Got WHEP URL: {ext.whep_url}")
                         break
-                req_data['answer'] = answer_sdp
-                req_data['status'] = 'ready'
+                with ext._whip_lock:
+                    req_data['answer'] = answer_sdp
+                    req_data['status'] = 'ready'
             except urllib.error.HTTPError as e:
                 err_body = e.read().decode() if hasattr(e, 'read') else str(e)
                 print(f"Daydream: WHIP proxy error {e.code}: {err_body}")
-                req_data['status'] = 'error'
-                req_data['error'] = err_body
+                with ext._whip_lock:
+                    req_data['status'] = 'error'
+                    req_data['error'] = err_body
                 run(f"op('{owner_path}').ext.Daydream._onWhipFailed()", delayFrames=1)
             except Exception as e:
                 print(f"Daydream: WHIP proxy error: {e}")
-                req_data['status'] = 'error'
-                req_data['error'] = str(e)
+                with ext._whip_lock:
+                    req_data['status'] = 'error'
+                    req_data['error'] = str(e)
                 run(f"op('{owner_path}').ext.Daydream._onWhipFailed()", delayFrames=1)
         ext._executor.submit(exchange_async)
         response['statusCode'] = 202
@@ -829,24 +835,25 @@ class HTTPHandler:
 
     def _handle_whip_result(self, response, path):
         request_id = path.split('/whip/result/')[-1]
-        req_data = self.ext._whip_requests.get(request_id)
-        if not req_data:
-            response['statusCode'] = 404
-            response['data'] = b'Request not found'
-            return
-        if req_data['status'] == 'pending':
-            response['statusCode'] = 202
-            response['content-type'] = 'application/json'
-            response['data'] = json.dumps({'status': 'pending'}).encode('utf-8')
-        elif req_data['status'] == 'ready':
-            response['statusCode'] = 200
-            response['content-type'] = 'application/sdp'
-            response['data'] = req_data['answer'].encode('utf-8')
-            del self.ext._whip_requests[request_id]
-        else:
-            response['statusCode'] = 500
-            response['data'] = (req_data['error'] or 'Unknown error').encode('utf-8')
-            del self.ext._whip_requests[request_id]
+        with self.ext._whip_lock:
+            req_data = self.ext._whip_requests.get(request_id)
+            if not req_data:
+                response['statusCode'] = 404
+                response['data'] = b'Request not found'
+                return
+            if req_data['status'] == 'pending':
+                response['statusCode'] = 202
+                response['content-type'] = 'application/json'
+                response['data'] = json.dumps({'status': 'pending'}).encode('utf-8')
+            elif req_data['status'] == 'ready':
+                response['statusCode'] = 200
+                response['content-type'] = 'application/sdp'
+                response['data'] = req_data['answer'].encode('utf-8')
+                del self.ext._whip_requests[request_id]
+            else:
+                response['statusCode'] = 500
+                response['data'] = (req_data['error'] or 'Unknown error').encode('utf-8')
+                del self.ext._whip_requests[request_id]
 
     def _handle_whep_proxy(self, request, response):
         if not self.ext.whep_url:
@@ -855,28 +862,33 @@ class HTTPHandler:
             return
         offer_sdp = request.get('data', b'').decode('utf-8')
         request_id = secrets.token_urlsafe(8)
-        self.ext._whep_requests[request_id] = {
-            'status': 'pending',
-            'offer': offer_sdp,
-            'answer': None,
-            'error': None,
-            'whep_url': self.ext.whep_url
-        }
         ext = self.ext
+        with ext._whep_lock:
+            ext._whep_requests[request_id] = {
+                'status': 'pending',
+                'offer': offer_sdp,
+                'answer': None,
+                'error': None,
+                'whep_url': self.ext.whep_url
+            }
         def exchange_async():
-            req_data = ext._whep_requests.get(request_id)
+            with ext._whep_lock:
+                req_data = ext._whep_requests.get(request_id)
             if not req_data:
                 return
             try:
                 answer_sdp, _ = ext.api.exchange_sdp(req_data['whep_url'], req_data['offer'], timeout=5)
-                req_data['answer'] = answer_sdp
-                req_data['status'] = 'ready'
+                with ext._whep_lock:
+                    req_data['answer'] = answer_sdp
+                    req_data['status'] = 'ready'
             except urllib.error.HTTPError:
-                req_data['status'] = 'error'
-                req_data['error'] = 'WHEP not ready'
+                with ext._whep_lock:
+                    req_data['status'] = 'error'
+                    req_data['error'] = 'WHEP not ready'
             except Exception as e:
-                req_data['status'] = 'error'
-                req_data['error'] = str(e)
+                with ext._whep_lock:
+                    req_data['status'] = 'error'
+                    req_data['error'] = str(e)
         ext._executor.submit(exchange_async)
         response['statusCode'] = 202
         response['statusReason'] = 'Accepted'
@@ -885,24 +897,25 @@ class HTTPHandler:
 
     def _handle_whep_result(self, response, path):
         request_id = path.split('/whep/result/')[-1]
-        req_data = self.ext._whep_requests.get(request_id)
-        if not req_data:
-            response['statusCode'] = 404
-            response['data'] = b'Request not found'
-            return
-        if req_data['status'] == 'pending':
-            response['statusCode'] = 202
-            response['content-type'] = 'application/json'
-            response['data'] = json.dumps({'status': 'pending'}).encode('utf-8')
-        elif req_data['status'] == 'ready':
-            response['statusCode'] = 200
-            response['content-type'] = 'application/sdp'
-            response['data'] = req_data['answer'].encode('utf-8')
-            del self.ext._whep_requests[request_id]
-        else:
-            response['statusCode'] = 500
-            response['data'] = (req_data['error'] or 'Unknown error').encode('utf-8')
-            del self.ext._whep_requests[request_id]
+        with self.ext._whep_lock:
+            req_data = self.ext._whep_requests.get(request_id)
+            if not req_data:
+                response['statusCode'] = 404
+                response['data'] = b'Request not found'
+                return
+            if req_data['status'] == 'pending':
+                response['statusCode'] = 202
+                response['content-type'] = 'application/json'
+                response['data'] = json.dumps({'status': 'pending'}).encode('utf-8')
+            elif req_data['status'] == 'ready':
+                response['statusCode'] = 200
+                response['content-type'] = 'application/sdp'
+                response['data'] = req_data['answer'].encode('utf-8')
+                del self.ext._whep_requests[request_id]
+            else:
+                response['statusCode'] = 500
+                response['data'] = (req_data['error'] or 'Unknown error').encode('utf-8')
+                del self.ext._whep_requests[request_id]
 
     def _handle_auth_callback(self, request, response):
         params = request.get('pars', {})
@@ -973,6 +986,9 @@ class DaydreamExt:
         self.ws_clients = set()
         self._whip_requests = {}
         self._whep_requests = {}
+        self._ws_lock = threading.Lock()
+        self._whip_lock = threading.Lock()
+        self._whep_lock = threading.Lock()
 
         self._auth_state = None
         self._auth_pending = False
@@ -1211,14 +1227,19 @@ class DaydreamExt:
         self._pending_changes.clear()
         web_server = self.ownerComp.op('web_server')
         if web_server:
-            for client in list(self.ws_clients):
+            with self._ws_lock:
+                clients_copy = list(self.ws_clients)
+            for client in clients_copy:
                 try:
                     web_server.webSocketClose(client)
                 except Exception:
                     pass
-        self.ws_clients.clear()
-        self._whip_requests.clear()
-        self._whep_requests.clear()
+        with self._ws_lock:
+            self.ws_clients.clear()
+        with self._whip_lock:
+            self._whip_requests.clear()
+        with self._whep_lock:
+            self._whep_requests.clear()
         web_render = self.ownerComp.op('web_render')
         if web_render:
             web_render.par.url = 'about:blank'
@@ -1353,17 +1374,21 @@ class DaydreamExt:
 
     def OnWebSocketOpen(self, client, uri):
         print(f"Daydream: WebSocket client connected: {client}")
-        self.ws_clients.add(client)
+        with self._ws_lock:
+            self.ws_clients.add(client)
 
     def OnWebSocketClose(self, client):
-        self.ws_clients.discard(client)
+        with self._ws_lock:
+            self.ws_clients.discard(client)
 
     def OnWebSocketReceiveText(self, client, data):
         pass
 
     def OnTimerPulse(self):
-        if self.state != "STREAMING" or not self.ws_clients:
-            return
+        with self._ws_lock:
+            if self.state != "STREAMING" or not self.ws_clients:
+                return
+            clients_snapshot = list(self.ws_clients)
         stream_source = self._stream_source
         web_server = self._web_server
         if not stream_source or not web_server:
@@ -1371,13 +1396,15 @@ class DaydreamExt:
         try:
             jpeg_data = stream_source.saveByteArray('.jpg', quality=0.7)
             dead_clients = []
-            for client in self.ws_clients:
+            for client in clients_snapshot:
                 try:
                     web_server.webSocketSendBinary(client, jpeg_data)
                 except Exception:
                     dead_clients.append(client)
-            for client in dead_clients:
-                self.ws_clients.discard(client)
+            if dead_clients:
+                with self._ws_lock:
+                    for client in dead_clients:
+                        self.ws_clients.discard(client)
         except Exception:
             pass
 
