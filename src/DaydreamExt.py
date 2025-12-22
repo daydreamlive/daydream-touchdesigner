@@ -1214,7 +1214,7 @@ class DaydreamExt:
             for client in list(self.ws_clients):
                 try:
                     web_server.webSocketClose(client)
-                except:
+                except Exception:
                     pass
         self.ws_clients.clear()
         self._whip_requests.clear()
@@ -1374,11 +1374,11 @@ class DaydreamExt:
             for client in self.ws_clients:
                 try:
                     web_server.webSocketSendBinary(client, jpeg_data)
-                except:
+                except Exception:
                     dead_clients.append(client)
             for client in dead_clients:
                 self.ws_clients.discard(client)
-        except:
+        except Exception:
             pass
 
     def OnHTTPRequest(self, request, response, server_type='frame'):
