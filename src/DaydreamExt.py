@@ -1867,7 +1867,7 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
                     return;
                 }
                 if (!response.ok) {
-                    if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 500); return; }
+                    if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 100); return; }
                     throw new Error('WHEP failed');
                 }
 
@@ -1876,16 +1876,16 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
                 whepRetries = 0;
             } catch (e) {
                 console.error('[Relay] WHEP error:', e);
-                if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 500); }
+                if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 100); }
             }
         }
 
         async function pollWhepResult(id) {
             try {
                 const response = await fetch(SDP_ORIGIN + '/whep/result/' + id);
-                if (response.status === 202) { setTimeout(() => pollWhepResult(id), 100); return; }
+                if (response.status === 202) { setTimeout(() => pollWhepResult(id), 0); return; }
                 if (!response.ok) {
-                    if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 500); }
+                    if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 100); }
                     return;
                 }
                 const answerSdp = await response.text();
@@ -1893,7 +1893,7 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
                 whepRetries = 0;
             } catch (e) {
                 console.error('[Relay] WHEP poll error:', e);
-                if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 500); }
+                if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 100); }
             }
         }
 
