@@ -11,7 +11,7 @@ import base64
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 
 API_TIMEOUT_CREATE = 15
 API_TIMEOUT_UPDATE = 10
@@ -1721,7 +1721,8 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' }
-                ]
+                ],
+                iceCandidatePoolSize: 10
             });
             whipPC.addTrack(videoTrack, canvasStream);
             console.log('[Relay] WebRTC warmed up');
@@ -1758,7 +1759,8 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
                         iceServers: [
                             { urls: 'stun:stun.l.google.com:19302' },
                             { urls: 'stun:stun1.l.google.com:19302' }
-                        ]
+                        ],
+                        iceCandidatePoolSize: 10
                     });
                     whipPC.addTrack(videoTrack, canvasStream);
                 }
@@ -1830,7 +1832,8 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
                     iceServers: [
                         { urls: 'stun:stun.l.google.com:19302' },
                         { urls: 'stun:stun1.l.google.com:19302' }
-                    ]
+                    ],
+                    iceCandidatePoolSize: 10
                 });
 
                 whepPC.ontrack = (e) => {
