@@ -1,6 +1,6 @@
 import { initDecoder } from "./decoder";
 import { connectWebSocket } from "./websocket";
-import { initWebRTC, warmupWebRTC, pollStatus, onVideoPlaying } from "./webrtc";
+import { RelayManager } from "./webrtc";
 import { startAuroraWorker, stopAuroraWorker } from "./aurora";
 
 const canvas = document.getElementById("input-canvas") as HTMLCanvasElement;
@@ -20,18 +20,23 @@ function hideStatus(): void {
   setTimeout(stopAuroraWorker, 300);
 }
 
+const relay = new RelayManager({
+  inputCanvas: canvas,
+  outputVideo: outputVideo,
+  onVideoStarted: hideStatus,
+  onLog: log,
+  frameRate: 30,
+});
+
 function init(): void {
   log("Starting...");
 
   initDecoder(canvas);
   startAuroraWorker(auroraCanvas);
 
-  initWebRTC(outputVideo, canvas, hideStatus);
-  outputVideo.onplaying = onVideoPlaying;
-
   connectWebSocket();
-  setTimeout(warmupWebRTC, 100);
-  pollStatus(log);
+  setTimeout(() => relay.warmup(), 100);
+  relay.start();
 }
 
 init();
