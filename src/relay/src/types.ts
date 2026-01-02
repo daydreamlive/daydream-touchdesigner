@@ -10,8 +10,8 @@ export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun1.l.google.com:19302" },
 ];
 
-export const DEFAULT_VIDEO_BITRATE = 4_000_000;
-export const DEFAULT_AUDIO_BITRATE = 128_000;
+export const DEFAULT_VIDEO_BITRATE = 300_000;
+export const DEFAULT_AUDIO_BITRATE = 64_000;
 
 export interface WHIPResponseResult {
   whepUrl: string | null;
