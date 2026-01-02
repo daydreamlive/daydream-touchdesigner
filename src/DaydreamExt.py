@@ -1499,422 +1499,132 @@ class DaydreamExt:
         self._executor.shutdown(wait=False)
 
 
+# RELAY_HTML_BEGIN
 RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
 <html>
-<head>
-    <meta charset="UTF-8">
+  <head>
+    <meta charset="UTF-8" />
     <title>Daydream Relay</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #000; width: 512px; height: 512px; overflow: hidden; }
-        #output-video { width: 512px; height: 512px; object-fit: cover; display: block; }
-        #input-canvas { display: none; }
-        #aurora {
-            position: absolute;
-            inset: 0;
-            z-index: 100;
-            pointer-events: none;
-            transition: opacity 0.3s ease-out;
-        }
-        #aurora.hidden { opacity: 0; }
-        #status {
-            position: absolute;
-            inset: 0;
-            z-index: 101;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            pointer-events: none;
-            transition: opacity 0.3s ease-out;
-        }
-        #status.hidden { opacity: 0; }
-        #status-text {
-            color: rgba(255, 255, 255, 0.9);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 26px;
-            font-weight: 500;
-            text-align: center;
-            text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
-        }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: #000;
+        width: 512px;
+        height: 512px;
+        overflow: hidden;
+      }
+      #output-video {
+        width: 512px;
+        height: 512px;
+        object-fit: cover;
+        display: block;
+      }
+      #input-canvas {
+        display: none;
+      }
+      #aurora {
+        position: absolute;
+        inset: 0;
+        z-index: 100;
+        pointer-events: none;
+        transition: opacity 0.3s ease-out;
+      }
+      #aurora.hidden {
+        opacity: 0;
+      }
+      #status {
+        position: absolute;
+        inset: 0;
+        z-index: 101;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        transition: opacity 0.3s ease-out;
+      }
+      #status.hidden {
+        opacity: 0;
+      }
+      #status-text {
+        color: rgba(255, 255, 255, 0.9);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        font-size: 26px;
+        font-weight: 500;
+        text-align: center;
+        text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+      }
     </style>
-</head>
-<body>
+    <script type="module" crossorigin>(function(){const t=document.createElement("link").relList;if(t&&t.supports&&t.supports("modulepreload"))return;for(const n of document.querySelectorAll('link[rel="modulepreload"]'))s(n);new MutationObserver(n=>{for(const i of n)if(i.type==="childList")for(const b of i.addedNodes)b.tagName==="LINK"&&b.rel==="modulepreload"&&s(b)}).observe(document,{childList:!0,subtree:!0});function o(n){const i={};return n.integrity&&(i.integrity=n.integrity),n.referrerPolicy&&(i.referrerPolicy=n.referrerPolicy),n.crossOrigin==="use-credentials"?i.credentials="include":n.crossOrigin==="anonymous"?i.credentials="omit":i.credentials="same-origin",i}function s(n){if(n.ep)return;n.ep=!0;const i=o(n);fetch(n.href,i)}})();let y,w,h,p=null,S=null;function M(e){if(y=e,h=!!y.getContext("bitmaprenderer"),w=h?y.getContext("bitmaprenderer"):y.getContext("2d"),!h){const t=w;t.fillStyle="#000",t.fillRect(0,0,512,512)}}function _(e){p=e,E()}function E(){if(!p||S)return;const e=p;p=null,S=createImageBitmap(new Blob([e],{type:"image/jpeg"})).then(t=>{h?w.transferFromImageBitmap(t):(w.drawImage(t,0,0,512,512),t.close())}).catch(()=>{}).finally(()=>{S=null,p&&E()})}const V="{{SDP_PORT}}",O=window.location.origin,R=`${window.location.protocol}//${window.location.hostname}:${V}`,j=O.replace("http","ws")+"/ws",F=R+"/whip",N=R+"/whep";let f=null;function k(){f=new WebSocket(j),f.binaryType="arraybuffer",f.onopen=()=>console.log("[Relay] WebSocket connected"),f.onmessage=e=>{e.data instanceof ArrayBuffer&&_(e.data)},f.onclose=()=>{console.log("[Relay] WebSocket closed, reconnecting..."),setTimeout(k,1e3)}}let r=null,a=null,g=null,l=null,x=!1,C=!1,c=0,H,P,D;const T=[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"}];function $(e,t,o){H=e,P=t,D=o}function L(e){if(e.setCodecPreferences)try{const t=RTCRtpSender.getCapabilities("video");if(!t?.codecs?.length)return;const o=t.codecs.filter(s=>s.mimeType.toLowerCase().includes("h264"));o.length&&e.setCodecPreferences(o)}catch{}}function U(){console.log("[Relay] Warming up WebRTC..."),g=P.captureStream(30),l=g.getVideoTracks()[0],r=new RTCPeerConnection({iceServers:T,iceCandidatePoolSize:10});const e=r.addTransceiver(l,{direction:"sendonly"});L(e),console.log("[Relay] WebRTC warmed up")}async function m(e){try{const t=await fetch(O+"/status");if(!t.ok){setTimeout(()=>m(e),100);return}const o=await t.json();o.state==="STREAMING"&&o.whip_url&&!x?(x=!0,console.log("[Relay] Stream ready, starting WHIP"),z(e)):x||setTimeout(()=>m(e),100)}catch{setTimeout(()=>m(e),100)}}async function z(e){e("Connecting to server...");try{if(l||(g=P.captureStream(30),l=g.getVideoTracks()[0]),!l)throw new Error("No video track from canvas");if(!r||r.signalingState==="closed"){r=new RTCPeerConnection({iceServers:T,iceCandidatePoolSize:10});const n=r.addTransceiver(l,{direction:"sendonly"});L(n)}r.oniceconnectionstatechange=()=>{console.log("[Relay] WHIP ICE:",r.iceConnectionState),r.iceConnectionState==="connected"?e("Connected, waiting for AI..."):r.iceConnectionState==="failed"&&e("Connection failed")};const t=await r.createOffer();await r.setLocalDescription(t),await new Promise(n=>{r.iceGatheringState==="complete"?n():(r.onicegatheringstatechange=()=>{r.iceGatheringState==="complete"&&n()},setTimeout(n,2e3))}),console.log("[Relay] Sending WHIP offer via proxy");const o=await fetch(F,{method:"POST",headers:{"Content-Type":"application/sdp"},body:r.localDescription.sdp});if(o.status===202){const{id:n}=await o.json();B(n,e);return}if(!o.ok)throw new Error("WHIP proxy error: "+o.status);const s=await o.text();console.log("[Relay] Got WHIP answer"),await r.setRemoteDescription({type:"answer",sdp:s}),u(e)}catch(t){console.error("[Relay] WHIP error:",t),e("Connection error")}}async function B(e,t){try{const o=await fetch(R+"/whip/result/"+e);if(o.status===202){setTimeout(()=>B(e,t),100);return}if(!o.ok)throw new Error("WHIP proxy error: "+o.status);const s=await o.text();console.log("[Relay] Got WHIP answer"),await r.setRemoteDescription({type:"answer",sdp:s}),u(t)}catch(o){console.error("[Relay] WHIP poll error:",o),t("Connection error")}}async function u(e){e("Waiting for AI stream...");try{if(a)try{a.close()}catch{}a=new RTCPeerConnection({iceServers:T,iceCandidatePoolSize:10}),a.ontrack=n=>{console.log("[Relay] WHEP track:",n.track.kind),n.track.kind==="video"&&(H.srcObject=n.streams[0]||new MediaStream([n.track]),C||e("Starting stream..."))},a.addTransceiver("video",{direction:"recvonly"}),a.addTransceiver("audio",{direction:"recvonly"});const t=await a.createOffer();await a.setLocalDescription(t),await new Promise(n=>{a.iceGatheringState==="complete"?n():(a.onicegatheringstatechange=()=>{a.iceGatheringState==="complete"&&n()},setTimeout(n,2e3))});const o=await fetch(N,{method:"POST",headers:{"Content-Type":"application/sdp"},body:a.localDescription.sdp});if(o.status===202){const{id:n}=await o.json();A(n,e);return}if(!o.ok){if(c<30){c++,setTimeout(()=>u(e),100);return}throw new Error("WHEP failed")}const s=await o.text();await a.setRemoteDescription({type:"answer",sdp:s}),c=0}catch(t){console.error("[Relay] WHEP error:",t),c<30&&(c++,setTimeout(()=>u(e),100))}}async function A(e,t){try{const o=await fetch(R+"/whep/result/"+e);if(o.status===202){setTimeout(()=>A(e,t),0);return}if(!o.ok){c<30&&(c++,setTimeout(()=>u(t),100));return}const s=await o.text();await a.setRemoteDescription({type:"answer",sdp:s}),c=0}catch(o){console.error("[Relay] WHEP poll error:",o),c<30&&(c++,setTimeout(()=>u(t),100))}}function q(){C||(C=!0,console.log("[Relay] Video playing"),D())}const K=`
+let canvas, ctx;
+let t = Math.random() * 100;
+let running = true;
+const DT = 0.016;
+
+const blobs = [
+    { cx: 256, cy: 256, rx: 120, ry: 80, sx: 0.7, sy: 0.5, baseR: 200, hue: 260, phase: 0 },
+    { cx: 256, cy: 256, rx: 100, ry: 120, sx: 0.5, sy: 0.8, baseR: 180, hue: 320, phase: 2 },
+    { cx: 256, cy: 256, rx: 140, ry: 100, sx: 0.6, sy: 0.4, baseR: 160, hue: 220, phase: 4 },
+    { cx: 256, cy: 256, rx: 80, ry: 140, sx: 0.4, sy: 0.6, baseR: 140, hue: 290, phase: 1 },
+    { cx: 256, cy: 256, rx: 60, ry: 60, sx: 1.2, sy: 0.9, baseR: 80, hue: 200, phase: 3 },
+    { cx: 256, cy: 256, rx: 50, ry: 70, sx: 0.9, sy: 1.1, baseR: 70, hue: 340, phase: 5 }
+];
+
+function drawFrame() {
+    if (!running || !ctx) return;
+    const start = performance.now();
+    t += DT;
+    
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+    ctx.fillRect(0, 0, 512, 512);
+    
+    for (const blob of blobs) {
+        const x = blob.cx + Math.sin(t * blob.sx + blob.phase) * blob.rx;
+        const y = blob.cy + Math.cos(t * blob.sy + blob.phase * 0.7) * blob.ry;
+        const r = blob.baseR + Math.sin(t * 2 + blob.phase) * 25;
+        const hue = (blob.hue + t * 12) % 360;
+        
+        const gradient = ctx.createRadialGradient(x, y, 0, x, y, r);
+        gradient.addColorStop(0, 'hsla(' + hue + ', 75%, 60%, 0.18)');
+        gradient.addColorStop(0.15, 'hsla(' + hue + ', 72%, 57%, 0.14)');
+        gradient.addColorStop(0.3, 'hsla(' + hue + ', 70%, 54%, 0.10)');
+        gradient.addColorStop(0.5, 'hsla(' + hue + ', 67%, 50%, 0.06)');
+        gradient.addColorStop(0.7, 'hsla(' + hue + ', 63%, 46%, 0.03)');
+        gradient.addColorStop(0.85, 'hsla(' + hue + ', 58%, 43%, 0.01)');
+        gradient.addColorStop(1, 'hsla(' + hue + ', 55%, 40%, 0)');
+        
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 512, 512);
+    }
+    
+    const elapsed = performance.now() - start;
+    setTimeout(drawFrame, Math.max(0, 16 - elapsed));
+}
+
+self.onmessage = (e) => {
+    if (e.data.type === 'init') {
+        canvas = e.data.canvas;
+        ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, 512, 512);
+        drawFrame();
+    } else if (e.data.type === 'stop') {
+        running = false;
+    }
+};
+`;let d=null;function X(e){const t=e.transferControlToOffscreen(),o=new Blob([K],{type:"application/javascript"});d=new Worker(URL.createObjectURL(o)),d.postMessage({type:"init",canvas:t},[t]),console.log("[Relay] Aurora worker started")}function Y(){d&&(d.postMessage({type:"stop"}),d.terminate(),d=null)}const W=document.getElementById("input-canvas"),v=document.getElementById("output-video"),G=document.getElementById("aurora"),J=document.getElementById("status"),Q=document.getElementById("status-text");function I(e){console.log("[Relay]",e),Q.textContent=e}function Z(){G.classList.add("hidden"),J.classList.add("hidden"),setTimeout(Y,300)}function ee(){I("Starting..."),M(W),X(G),$(v,W,Z),v.onplaying=q,k(),setTimeout(U,100),m(I)}ee();</script>
+  </head>
+  <body>
     <video id="output-video" autoplay playsinline muted></video>
     <canvas id="input-canvas" width="512" height="512"></canvas>
     <canvas id="aurora" width="512" height="512"></canvas>
     <div id="status"><div id="status-text">Connecting...</div></div>
-    <script>
-        const ORIGIN = window.location.origin;
-        const SDP_PORT = {{SDP_PORT}};
-        const SDP_ORIGIN = window.location.protocol + '//' + window.location.hostname + ':' + SDP_PORT;
-        const WS_URL = ORIGIN.replace('http', 'ws') + '/ws';
-        const WHIP_PROXY = SDP_ORIGIN + '/whip';
-        const WHEP_PROXY = SDP_ORIGIN + '/whep';
-
-        const canvas = document.getElementById('input-canvas');
-        const outputVideo = document.getElementById('output-video');
-        const auroraCanvas = document.getElementById('aurora');
-        const statusEl = document.getElementById('status');
-        const statusText = document.getElementById('status-text');
-
-        const useBitmapRenderer = !!canvas.getContext('bitmaprenderer');
-        const ctx = useBitmapRenderer ? canvas.getContext('bitmaprenderer') : canvas.getContext('2d');
-        const ctx2d = useBitmapRenderer ? null : ctx;
-
-        let whipPC = null, whepPC = null;
-        let ws = null;
-        let latestFrame = null;
-        let pendingDecode = null;
-        let videoStarted = false;
-        let whipStarted = false;
-        let canvasStream = null;
-        let videoTrack = null;
-        let auroraWorker = null;
-
-        const workerCode = `
-            let canvas, ctx;
-            let t = Math.random() * 100;
-            let running = true;
-            const DT = 0.016;
-            
-            const blobs = [
-                { cx: 256, cy: 256, rx: 120, ry: 80, sx: 0.7, sy: 0.5, baseR: 200, hue: 260, phase: 0 },
-                { cx: 256, cy: 256, rx: 100, ry: 120, sx: 0.5, sy: 0.8, baseR: 180, hue: 320, phase: 2 },
-                { cx: 256, cy: 256, rx: 140, ry: 100, sx: 0.6, sy: 0.4, baseR: 160, hue: 220, phase: 4 },
-                { cx: 256, cy: 256, rx: 80, ry: 140, sx: 0.4, sy: 0.6, baseR: 140, hue: 290, phase: 1 },
-                { cx: 256, cy: 256, rx: 60, ry: 60, sx: 1.2, sy: 0.9, baseR: 80, hue: 200, phase: 3 },
-                { cx: 256, cy: 256, rx: 50, ry: 70, sx: 0.9, sy: 1.1, baseR: 70, hue: 340, phase: 5 }
-            ];
-            
-            function drawFrame() {
-                if (!running || !ctx) return;
-                const start = performance.now();
-                t += DT;
-                
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
-                ctx.fillRect(0, 0, 512, 512);
-                
-                for (const blob of blobs) {
-                    const x = blob.cx + Math.sin(t * blob.sx + blob.phase) * blob.rx;
-                    const y = blob.cy + Math.cos(t * blob.sy + blob.phase * 0.7) * blob.ry;
-                    const r = blob.baseR + Math.sin(t * 2 + blob.phase) * 25;
-                    const hue = (blob.hue + t * 12) % 360;
-                    
-                    const gradient = ctx.createRadialGradient(x, y, 0, x, y, r);
-                    gradient.addColorStop(0, 'hsla(' + hue + ', 75%, 60%, 0.18)');
-                    gradient.addColorStop(0.15, 'hsla(' + hue + ', 72%, 57%, 0.14)');
-                    gradient.addColorStop(0.3, 'hsla(' + hue + ', 70%, 54%, 0.10)');
-                    gradient.addColorStop(0.5, 'hsla(' + hue + ', 67%, 50%, 0.06)');
-                    gradient.addColorStop(0.7, 'hsla(' + hue + ', 63%, 46%, 0.03)');
-                    gradient.addColorStop(0.85, 'hsla(' + hue + ', 58%, 43%, 0.01)');
-                    gradient.addColorStop(1, 'hsla(' + hue + ', 55%, 40%, 0)');
-                    
-                    ctx.fillStyle = gradient;
-                    ctx.fillRect(0, 0, 512, 512);
-                }
-                
-                const elapsed = performance.now() - start;
-                setTimeout(drawFrame, Math.max(0, 16 - elapsed));
-            }
-            
-            self.onmessage = (e) => {
-                if (e.data.type === 'init') {
-                    canvas = e.data.canvas;
-                    ctx = canvas.getContext('2d');
-                    ctx.fillStyle = '#000';
-                    ctx.fillRect(0, 0, 512, 512);
-                    drawFrame();
-                } else if (e.data.type === 'stop') {
-                    running = false;
-                }
-            };
-        `;
-
-        function startAuroraWorker() {
-            const offscreen = auroraCanvas.transferControlToOffscreen();
-            const blob = new Blob([workerCode], { type: 'application/javascript' });
-            auroraWorker = new Worker(URL.createObjectURL(blob));
-            auroraWorker.postMessage({ type: 'init', canvas: offscreen }, [offscreen]);
-            console.log('[Relay] Aurora worker started');
-        }
-
-        function stopAuroraWorker() {
-            if (auroraWorker) {
-                auroraWorker.postMessage({ type: 'stop' });
-                auroraWorker.terminate();
-                auroraWorker = null;
-            }
-        }
-
-        function log(msg) {
-            console.log('[Relay]', msg);
-            statusText.textContent = msg;
-        }
-
-        function hideStatus() {
-            auroraCanvas.classList.add('hidden');
-            statusEl.classList.add('hidden');
-            setTimeout(stopAuroraWorker, 300);
-        }
-
-        function decodeLoop() {
-            if (!latestFrame || pendingDecode) return;
-            const frame = latestFrame;
-            latestFrame = null;
-            pendingDecode = createImageBitmap(new Blob([frame], { type: 'image/jpeg' }))
-                .then(bitmap => {
-                    if (useBitmapRenderer) {
-                        ctx.transferFromImageBitmap(bitmap);
-                    } else {
-                        ctx2d.drawImage(bitmap, 0, 0, 512, 512);
-                        bitmap.close();
-                    }
-                })
-                .catch(() => {})
-                .finally(() => {
-                    pendingDecode = null;
-                    if (latestFrame) decodeLoop();
-                });
-        }
-
-        function connectWebSocket() {
-            ws = new WebSocket(WS_URL);
-            ws.binaryType = 'arraybuffer';
-            ws.onopen = () => console.log('[Relay] WebSocket connected');
-            ws.onmessage = (e) => {
-                if (e.data instanceof ArrayBuffer) {
-                    latestFrame = e.data;
-                    decodeLoop();
-                }
-            };
-            ws.onclose = () => {
-                console.log('[Relay] WebSocket closed, reconnecting...');
-                setTimeout(connectWebSocket, 1000);
-            };
-        }
-
-        function setH264Preference(transceiver) {
-            if (!transceiver.setCodecPreferences) return;
-            try {
-                const caps = RTCRtpSender.getCapabilities('video');
-                if (!caps?.codecs?.length) return;
-                const h264 = caps.codecs.filter(c => c.mimeType.toLowerCase().includes('h264'));
-                if (h264.length) transceiver.setCodecPreferences(h264);
-            } catch {}
-        }
-
-        function warmupWebRTC() {
-            console.log('[Relay] Warming up WebRTC...');
-            canvasStream = canvas.captureStream(30);
-            videoTrack = canvasStream.getVideoTracks()[0];
-            whipPC = new RTCPeerConnection({
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' }
-                ],
-                iceCandidatePoolSize: 10
-            });
-            const transceiver = whipPC.addTransceiver(videoTrack, { direction: 'sendonly' });
-            setH264Preference(transceiver);
-            console.log('[Relay] WebRTC warmed up');
-        }
-
-        async function pollStatus() {
-            try {
-                const res = await fetch(ORIGIN + '/status');
-                if (!res.ok) { setTimeout(pollStatus, 100); return; }
-                const data = await res.json();
-                if (data.state === 'STREAMING' && data.whip_url && !whipStarted) {
-                    whipStarted = true;
-                    console.log('[Relay] Stream ready, starting WHIP');
-                    startWHIP();
-                } else if (!whipStarted) {
-                    setTimeout(pollStatus, 100);
-                }
-            } catch {
-                setTimeout(pollStatus, 100);
-            }
-        }
-
-        async function startWHIP() {
-            log('Connecting to server...');
-            try {
-                if (!videoTrack) {
-                    canvasStream = canvas.captureStream(30);
-                    videoTrack = canvasStream.getVideoTracks()[0];
-                }
-                if (!videoTrack) throw new Error('No video track from canvas');
-
-                if (!whipPC || whipPC.signalingState === 'closed') {
-                    whipPC = new RTCPeerConnection({
-                        iceServers: [
-                            { urls: 'stun:stun.l.google.com:19302' },
-                            { urls: 'stun:stun1.l.google.com:19302' }
-                        ],
-                        iceCandidatePoolSize: 10
-                    });
-                    const transceiver = whipPC.addTransceiver(videoTrack, { direction: 'sendonly' });
-                    setH264Preference(transceiver);
-                }
-
-                whipPC.oniceconnectionstatechange = () => {
-                    console.log('[Relay] WHIP ICE:', whipPC.iceConnectionState);
-                    if (whipPC.iceConnectionState === 'connected') log('Connected, waiting for AI...');
-                    else if (whipPC.iceConnectionState === 'failed') log('Connection failed');
-                };
-
-                const offer = await whipPC.createOffer();
-                await whipPC.setLocalDescription(offer);
-
-                await new Promise(r => {
-                    if (whipPC.iceGatheringState === 'complete') r();
-                    else {
-                        whipPC.onicegatheringstatechange = () => { if (whipPC.iceGatheringState === 'complete') r(); };
-                        setTimeout(r, 2000);
-                    }
-                });
-
-                console.log('[Relay] Sending WHIP offer via proxy');
-                const response = await fetch(WHIP_PROXY, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/sdp' },
-                    body: whipPC.localDescription.sdp
-                });
-
-                if (response.status === 202) {
-                    const { id } = await response.json();
-                    pollWhipResult(id);
-                    return;
-                }
-                if (!response.ok) throw new Error('WHIP proxy error: ' + response.status);
-
-                const answerSdp = await response.text();
-                console.log('[Relay] Got WHIP answer');
-                await whipPC.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-                startWHEP();
-            } catch (e) {
-                console.error('[Relay] WHIP error:', e);
-                log('Connection error');
-            }
-        }
-
-        async function pollWhipResult(id) {
-            try {
-                const response = await fetch(SDP_ORIGIN + '/whip/result/' + id);
-                if (response.status === 202) { setTimeout(() => pollWhipResult(id), 100); return; }
-                if (!response.ok) throw new Error('WHIP proxy error: ' + response.status);
-                const answerSdp = await response.text();
-                console.log('[Relay] Got WHIP answer');
-                await whipPC.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-                startWHEP();
-            } catch (e) {
-                console.error('[Relay] WHIP poll error:', e);
-                log('Connection error');
-            }
-        }
-
-        let whepRetries = 0;
-
-        async function startWHEP() {
-            log('Waiting for AI stream...');
-            try {
-                if (whepPC) { try { whepPC.close(); } catch {} }
-                whepPC = new RTCPeerConnection({
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' }
-                    ],
-                    iceCandidatePoolSize: 10
-                });
-
-                whepPC.ontrack = (e) => {
-                    console.log('[Relay] WHEP track:', e.track.kind);
-                    if (e.track.kind === 'video') {
-                        outputVideo.srcObject = e.streams[0] || new MediaStream([e.track]);
-                        if (!videoStarted) log('Starting stream...');
-                    }
-                };
-
-                whepPC.addTransceiver('video', { direction: 'recvonly' });
-                whepPC.addTransceiver('audio', { direction: 'recvonly' });
-
-                const offer = await whepPC.createOffer();
-                await whepPC.setLocalDescription(offer);
-
-                await new Promise(r => {
-                    if (whepPC.iceGatheringState === 'complete') r();
-                    else {
-                        whepPC.onicegatheringstatechange = () => { if (whepPC.iceGatheringState === 'complete') r(); };
-                        setTimeout(r, 2000);
-                    }
-                });
-
-                const response = await fetch(WHEP_PROXY, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/sdp' },
-                    body: whepPC.localDescription.sdp
-                });
-
-                if (response.status === 202) {
-                    const { id } = await response.json();
-                    pollWhepResult(id);
-                    return;
-                }
-                if (!response.ok) {
-                    if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 100); return; }
-                    throw new Error('WHEP failed');
-                }
-
-                const answerSdp = await response.text();
-                await whepPC.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-                whepRetries = 0;
-            } catch (e) {
-                console.error('[Relay] WHEP error:', e);
-                if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 100); }
-            }
-        }
-
-        async function pollWhepResult(id) {
-            try {
-                const response = await fetch(SDP_ORIGIN + '/whep/result/' + id);
-                if (response.status === 202) { setTimeout(() => pollWhepResult(id), 0); return; }
-                if (!response.ok) {
-                    if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 100); }
-                    return;
-                }
-                const answerSdp = await response.text();
-                await whepPC.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-                whepRetries = 0;
-            } catch (e) {
-                console.error('[Relay] WHEP poll error:', e);
-                if (whepRetries < 30) { whepRetries++; setTimeout(startWHEP, 100); }
-            }
-        }
-
-        function init() {
-            log('Starting...');
-            if (ctx2d) {
-                ctx2d.fillStyle = '#000';
-                ctx2d.fillRect(0, 0, 512, 512);
-            }
-
-            startAuroraWorker();
-
-            outputVideo.onplaying = () => {
-                if (!videoStarted) {
-                    videoStarted = true;
-                    console.log('[Relay] Video playing');
-                    hideStatus();
-                }
-            };
-
-            connectWebSocket();
-            setTimeout(warmupWebRTC, 100);
-            pollStatus();
-        }
-
-        init();
-    </script>
-</body>
-</html>'''
+  </body>
+</html>
+'''
+# RELAY_HTML_END
