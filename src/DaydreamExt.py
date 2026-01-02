@@ -1658,25 +1658,6 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
             setTimeout(stopAuroraWorker, 300);
         }
 
-        function preferH264(sdp) {
-            const lines = sdp.split('\\r\\n');
-            let videoMLineIndex = -1;
-            let h264Payloads = [];
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].startsWith('m=video')) videoMLineIndex = i;
-                const match = lines[i].match(/a=rtpmap:(\\d+)\\s+H264/i);
-                if (match) h264Payloads.push(match[1]);
-            }
-            if (videoMLineIndex >= 0 && h264Payloads.length > 0) {
-                const parts = lines[videoMLineIndex].split(' ');
-                const payloads = parts.slice(3);
-                const sorted = [...h264Payloads, ...payloads.filter(p => !h264Payloads.includes(p))];
-                parts.splice(3, payloads.length, ...sorted);
-                lines[videoMLineIndex] = parts.join(' ');
-            }
-            return lines.join('\\r\\n');
-        }
-
         function decodeLoop() {
             if (!latestFrame || pendingDecode) return;
             const frame = latestFrame;
@@ -1713,6 +1694,16 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
             };
         }
 
+        function setH264Preference(transceiver) {
+            if (!transceiver.setCodecPreferences) return;
+            try {
+                const caps = RTCRtpSender.getCapabilities('video');
+                if (!caps?.codecs?.length) return;
+                const h264 = caps.codecs.filter(c => c.mimeType.toLowerCase().includes('h264'));
+                if (h264.length) transceiver.setCodecPreferences(h264);
+            } catch {}
+        }
+
         function warmupWebRTC() {
             console.log('[Relay] Warming up WebRTC...');
             canvasStream = canvas.captureStream(30);
@@ -1724,7 +1715,8 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
                 ],
                 iceCandidatePoolSize: 10
             });
-            whipPC.addTrack(videoTrack, canvasStream);
+            const transceiver = whipPC.addTransceiver(videoTrack, { direction: 'sendonly' });
+            setH264Preference(transceiver);
             console.log('[Relay] WebRTC warmed up');
         }
 
@@ -1762,7 +1754,8 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
                         ],
                         iceCandidatePoolSize: 10
                     });
-                    whipPC.addTrack(videoTrack, canvasStream);
+                    const transceiver = whipPC.addTransceiver(videoTrack, { direction: 'sendonly' });
+                    setH264Preference(transceiver);
                 }
 
                 whipPC.oniceconnectionstatechange = () => {
@@ -1772,8 +1765,7 @@ RELAY_HTML_TEMPLATE = '''<!DOCTYPE html>
                 };
 
                 const offer = await whipPC.createOffer();
-                const h264Sdp = preferH264(offer.sdp);
-                await whipPC.setLocalDescription({ type: 'offer', sdp: h264Sdp });
+                await whipPC.setLocalDescription(offer);
 
                 await new Promise(r => {
                     if (whipPC.iceGatheringState === 'complete') r();
