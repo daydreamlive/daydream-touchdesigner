@@ -11,7 +11,7 @@ import base64
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 
 API_TIMEOUT_CREATE = 15
 API_TIMEOUT_UPDATE = 10
