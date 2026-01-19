@@ -8,10 +8,11 @@ import secrets
 import socket
 import webbrowser
 import base64
+import random
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
-VERSION = "0.1.7"
+VERSION = "0.2.0"
 
 API_TIMEOUT_CREATE = 15
 API_TIMEOUT_UPDATE = 10
@@ -126,6 +127,8 @@ CONTROLNET_PARAM_MAP = {
 
 CN_PARAMS_SET = {'Depth', 'Canny', 'Tile', 'Hed', 'Openpose', 'Color'}
 IP_PARAMS_SET = {'Ipadapter', 'Ipadapterscale', 'Styleimage', 'Ipadaptertype'}
+PROMPT_PARAMS_SET = {'Promptinterpolation', 'Normalizepromptweights'}
+SEED_PARAMS_SET = {'Seedinterpolation', 'Normalizeseedweights'}
 
 IP_ADAPTER_SUPPORT = {
     "stabilityai/sdxl-turbo": {"regular", "faceid"},
@@ -135,17 +138,18 @@ IP_ADAPTER_SUPPORT = {
 }
 
 ALL_WATCHED_PARAMS = [
-    "Login", "Resetparameters", "Active", "Model", "Prompt", "Negprompt", "Seed",
+    "Login", "Resetparameters", "Active", "Model", "Negprompt",
     "Guidance", "Delta", "Steps", "Stepschedule*",
     "Noise", "Width", "Height",
     "Depth", "Canny", "Tile", "Hed", "Openpose", "Color",
     "Ipadapter", "Ipadapterscale", "Styleimage", "Ipadaptertype",
+    "Promptschedule*", "Seedschedule*",
+    "Promptinterpolation", "Normalizepromptweights",
+    "Seedinterpolation", "Normalizeseedweights", "Randomizeseeds",
 ]
 
 PARAM_DEFAULTS = {
-    'Prompt': 'strawberry',
     'Negprompt': 'blurry, low quality, flat, 2d',
-    'Seed': 42,
     'Noise': True,
     'Guidance': 1.0,
     'Delta': 0.7,
@@ -164,6 +168,10 @@ PARAM_DEFAULTS = {
     'Styleimage': '',
     'Model': 'stabilityai/sdxl-turbo',
     'Active': False,
+    'Promptinterpolation': 'slerp',
+    'Normalizepromptweights': True,
+    'Seedinterpolation': 'slerp',
+    'Normalizeseedweights': True,
 }
 
 
@@ -278,16 +286,46 @@ class ParameterManager:
         return bool(val) if val is not None else default
 
     @property
-    def Prompt(self):
-        return self._get('Prompt', '')
+    def PromptList(self):
+        result = []
+        if hasattr(self.ownerComp.seq, 'Promptschedule'):
+            for block in self.ownerComp.seq.Promptschedule.blocks:
+                text = block.par.Prompttext.eval() if hasattr(block.par, 'Prompttext') else ''
+                weight = block.par.Promptweight.eval() if hasattr(block.par, 'Promptweight') else 1.0
+                if text:
+                    result.append([text, weight])
+        return result if result else [['strawberry', 1.0]]
+
+    @property
+    def SeedList(self):
+        result = []
+        if hasattr(self.ownerComp.seq, 'Seedschedule'):
+            for block in self.ownerComp.seq.Seedschedule.blocks:
+                seed = int(block.par.Seedval.eval()) if hasattr(block.par, 'Seedval') else 42
+                weight = block.par.Seedweight.eval() if hasattr(block.par, 'Seedweight') else 1.0
+                if seed >= 0:
+                    result.append([seed, weight])
+        return result if result else None
+
+    @property
+    def Promptinterpolation(self):
+        return self._get('Promptinterpolation', 'slerp')
+
+    @property
+    def Normalizepromptweights(self):
+        return self._get_bool('Normalizepromptweights', True)
+
+    @property
+    def Seedinterpolation(self):
+        return self._get('Seedinterpolation', 'slerp')
+
+    @property
+    def Normalizeseedweights(self):
+        return self._get_bool('Normalizeseedweights', True)
 
     @property
     def Negprompt(self):
         return self._get('Negprompt', '')
-
-    @property
-    def Seed(self):
-        return self._get_int('Seed', -1)
 
     @property
     def Guidance(self):
@@ -405,14 +443,19 @@ class ParameterManager:
             page.appendPulse('Resetparameters', label='Reset Parameters')
 
     def _ensure_missing_params(self, page):
-        if not hasattr(self.ownerComp.par, 'Prompt'):
-            p = page.appendStr('Prompt', label='Prompt')[0]
-            p.default = p.val = PARAM_DEFAULTS['Prompt']
+        if not hasattr(self.ownerComp.seq, 'Promptschedule'):
+            self._create_promptschedule(page)
+        if not hasattr(self.ownerComp.par, 'Promptinterpolation'):
+            self._create_prompt_interpolation_params(page)
         if not hasattr(self.ownerComp.par, 'Negprompt'):
             p = page.appendStr('Negprompt', label='Negative Prompt')[0]
             p.default = p.val = PARAM_DEFAULTS['Negprompt']
-        if not hasattr(self.ownerComp.par, 'Seed'):
-            self._create_seed_param(page)
+        if not hasattr(self.ownerComp.seq, 'Seedschedule'):
+            self._create_seedschedule(page)
+        if not hasattr(self.ownerComp.par, 'Seedinterpolation'):
+            self._create_seed_interpolation_params(page)
+        if not hasattr(self.ownerComp.par, 'Randomizeseeds'):
+            page.appendPulse('Randomizeseeds', label='Randomize Seeds')
         if not hasattr(self.ownerComp.par, 'Noise'):
             p = page.appendToggle('Noise', label='Add Noise')[0]
             p.default = p.val = True
@@ -455,12 +498,18 @@ class ParameterManager:
 
         params = self.ownerComp.appendCustomPage('Parameters')
 
-        params.appendHeader('Generation')
-        p = params.appendStr('Prompt', label='Prompt')[0]
-        p.default = p.val = PARAM_DEFAULTS['Prompt']
+        params.appendHeader('Prompt')
+        self._create_promptschedule(params)
+        self._create_prompt_interpolation_params(params)
         p = params.appendStr('Negprompt', label='Negative Prompt')[0]
         p.default = p.val = PARAM_DEFAULTS['Negprompt']
-        self._create_seed_param(params)
+
+        params.appendHeader('Seed')
+        self._create_seedschedule(params)
+        self._create_seed_interpolation_params(params)
+        params.appendPulse('Randomizeseeds', label='Randomize Seeds')
+
+        params.appendHeader('Generation')
         p = params.appendToggle('Noise', label='Add Noise')[0]
         p.default = p.val = True
 
@@ -491,13 +540,6 @@ class ParameterManager:
         p.menuLabels = ['SDXL Turbo', 'SD Turbo', 'Dreamshaper 8', 'Openjourney v4']
         p.default = p.val = 'stabilityai/sdxl-turbo'
 
-    def _create_seed_param(self, page):
-        p = page.appendInt('Seed', label='Seed')[0]
-        p.default = p.val = 42
-        p.min = -1
-        p.normMin, p.normMax = 0, 10000
-        p.clampMin = True
-
     def _create_guidance_param(self, page):
         p = page.appendFloat('Guidance', label='Guidance Scale')[0]
         p.default = p.val = 1.0
@@ -526,6 +568,29 @@ class ParameterManager:
         p.clampMin = True
         self.ownerComp.seq.Stepschedule.blockSize = 1
 
+    def _create_promptschedule(self, page):
+        page.appendSequence('Promptschedule', label='Prompt Schedule')
+        p = page.appendStr('Prompttext', label='Prompt')[0]
+        p.default = p.val = 'strawberry'
+        w = page.appendFloat('Promptweight', label='Weight')[0]
+        w.default = w.val = 1.0
+        w.min, w.max = 0.0, 1.0
+        w.clampMin = True
+        self.ownerComp.seq.Promptschedule.blockSize = 2
+
+    def _create_seedschedule(self, page):
+        page.appendSequence('Seedschedule', label='Seed Schedule')
+        s = page.appendInt('Seedval', label='Seed')[0]
+        s.default = s.val = 42
+        s.min = -1
+        s.normMin, s.normMax = 0, 10000
+        s.clampMin = True
+        w = page.appendFloat('Seedweight', label='Weight')[0]
+        w.default = w.val = 1.0
+        w.min, w.max = 0.0, 1.0
+        w.clampMin = True
+        self.ownerComp.seq.Seedschedule.blockSize = 2
+
     def _create_resolution_param(self, page, name):
         p = page.appendMenu(name, label=name)[0]
         p.menuNames = p.menuLabels = ['512', '448', '384', '320', '256', '192', '128', '64']
@@ -549,22 +614,41 @@ class ParameterManager:
         p.menuLabels = ['Regular', 'FaceID']
         p.default = p.val = 'regular'
 
+    def _create_prompt_interpolation_params(self, page):
+        p = page.appendMenu('Promptinterpolation', label='Prompt Interpolation')[0]
+        p.menuNames = ['linear', 'slerp']
+        p.menuLabels = ['Linear', 'Slerp']
+        p.default = p.val = 'slerp'
+        t = page.appendToggle('Normalizepromptweights', label='Normalize Prompt Weights')[0]
+        t.default = t.val = True
+
+    def _create_seed_interpolation_params(self, page):
+        p = page.appendMenu('Seedinterpolation', label='Seed Interpolation')[0]
+        p.menuNames = ['linear', 'slerp']
+        p.menuLabels = ['Linear', 'Slerp']
+        p.default = p.val = 'slerp'
+        t = page.appendToggle('Normalizeseedweights', label='Normalize Seed Weights')[0]
+        t.default = t.val = True
+
     def reset(self):
         for p in list(self.ownerComp.customPages):
             if p.name in ('Daydream', 'Parameters'):
                 p.destroy()
-        if hasattr(self.ownerComp.seq, 'Stepschedule'):
-            self.ownerComp.seq.Stepschedule.destroy()
+        for seq_name in ['Stepschedule', 'Promptschedule', 'Seedschedule']:
+            if hasattr(self.ownerComp.seq, seq_name):
+                getattr(self.ownerComp.seq, seq_name).destroy()
         self.create_all()
         print("Daydream: Parameters reset to defaults")
 
     def update_states(self, logged_in):
         par = self.ownerComp.par
         all_params = [
-            'Resetparameters', 'Active', 'Model', 'Prompt', 'Negprompt', 'Seed', 'Noise',
+            'Resetparameters', 'Active', 'Model', 'Negprompt', 'Noise',
             'Guidance', 'Delta', 'Steps', 'Stepschedule', 'Width', 'Height',
             'Depth', 'Canny', 'Tile', 'Hed', 'Openpose', 'Color',
             'Ipadapter', 'Ipadapterscale', 'Ipadaptertype', 'Styleimage',
+            'Promptinterpolation', 'Normalizepromptweights',
+            'Seedinterpolation', 'Normalizeseedweights', 'Randomizeseeds',
         ]
         for par_name in all_params:
             if hasattr(par, par_name):
@@ -573,6 +657,18 @@ class ParameterManager:
             for block in self.ownerComp.seq.Stepschedule.blocks:
                 if hasattr(block.par, 'Step'):
                     block.par.Step.enable = logged_in
+        if hasattr(self.ownerComp.seq, 'Promptschedule'):
+            for block in self.ownerComp.seq.Promptschedule.blocks:
+                if hasattr(block.par, 'Prompttext'):
+                    block.par.Prompttext.enable = logged_in
+                if hasattr(block.par, 'Promptweight'):
+                    block.par.Promptweight.enable = logged_in
+        if hasattr(self.ownerComp.seq, 'Seedschedule'):
+            for block in self.ownerComp.seq.Seedschedule.blocks:
+                if hasattr(block.par, 'Seedval'):
+                    block.par.Seedval.enable = logged_in
+                if hasattr(block.par, 'Seedweight'):
+                    block.par.Seedweight.enable = logged_in
         if not logged_in:
             if hasattr(par, 'Active'):
                 par.Active.val = False
@@ -674,16 +770,27 @@ class ParameterManager:
 
     def build_params(self, for_update=False):
         params = {
-            "prompt": self.Prompt,
             "negative_prompt": self.Negprompt,
             "guidance_scale": self.Guidance,
             "delta": self.Delta,
             "t_index_list": self.TindexList,
             "do_add_noise": self.Noise,
         }
-        seed = self.Seed
-        if seed >= 0:
-            params["seed"] = seed
+        prompt_list = self.PromptList
+        if len(prompt_list) == 1:
+            params["prompt"] = prompt_list[0][0]
+        else:
+            params["prompt"] = prompt_list
+            params["prompt_interpolation_method"] = self.Promptinterpolation
+            params["normalize_prompt_weights"] = self.Normalizepromptweights
+        seed_list = self.SeedList
+        if seed_list:
+            if len(seed_list) == 1:
+                params["seed"] = seed_list[0][0]
+            else:
+                params["seed"] = seed_list
+                params["seed_interpolation_method"] = self.Seedinterpolation
+                params["normalize_seed_weights"] = self.Normalizeseedweights
         controlnets = self.build_controlnets()
         if controlnets:
             params["controlnets"] = controlnets
@@ -700,14 +807,27 @@ class ParameterManager:
 
     def build_changed_params(self, changed):
         params = {}
-        if 'Prompt' in changed:
-            params['prompt'] = self.Prompt
+        prompt_changed = any(c.lower().startswith('promptschedule') for c in changed)
+        if prompt_changed or changed & PROMPT_PARAMS_SET:
+            prompt_list = self.PromptList
+            if len(prompt_list) == 1:
+                params['prompt'] = prompt_list[0][0]
+            else:
+                params['prompt'] = prompt_list
+                params['prompt_interpolation_method'] = self.Promptinterpolation
+                params['normalize_prompt_weights'] = self.Normalizepromptweights
         if 'Negprompt' in changed:
             params['negative_prompt'] = self.Negprompt
-        if 'Seed' in changed:
-            seed = self.Seed
-            if seed >= 0:
-                params['seed'] = seed
+        seed_changed = any(c.lower().startswith('seedschedule') for c in changed)
+        if seed_changed or changed & SEED_PARAMS_SET:
+            seed_list = self.SeedList
+            if seed_list:
+                if len(seed_list) == 1:
+                    params['seed'] = seed_list[0][0]
+                else:
+                    params['seed'] = seed_list
+                    params['seed_interpolation_method'] = self.Seedinterpolation
+                    params['normalize_seed_weights'] = self.Normalizeseedweights
         if 'Guidance' in changed:
             params['guidance_scale'] = self.Guidance
         if 'Delta' in changed:
@@ -1460,18 +1580,35 @@ class DaydreamExt:
         if text_op:
             text_op.par.text = f"Daydream\n{text}"
 
+    def _randomize_seeds(self):
+        if not hasattr(self.ownerComp.seq, 'Seedschedule'):
+            return
+        for block in self.ownerComp.seq.Seedschedule.blocks:
+            if hasattr(block.par, 'Seedval'):
+                block.par.Seedval.val = random.randint(0, 10000)
+        if self.state == "STREAMING" and self.stream_id:
+            self._scheduleParamsUpdate('Seedschedule')
+        print("Daydream: Seeds randomized")
+
     def OnParameterChange(self, par):
         print(f"Daydream: Parameter changed: {par.name} = {par.eval()}")
         hot_params = [
-            'Prompt', 'Negprompt', 'Seed', 'Guidance', 'Delta',
+            'Negprompt', 'Guidance', 'Delta',
             'Depth', 'Canny', 'Tile', 'Hed', 'Openpose', 'Color',
             'Ipadapter', 'Ipadapterscale', 'Styleimage',
+            'Promptinterpolation', 'Normalizepromptweights',
+            'Seedinterpolation', 'Normalizeseedweights',
         ]
-        is_stepschedule = par.name.lower().startswith('stepschedule') and par.name.lower().endswith('step')
+        par_lower = par.name.lower()
+        is_stepschedule = par_lower.startswith('stepschedule') and par_lower.endswith('step')
+        is_promptschedule = par_lower.startswith('promptschedule')
+        is_seedschedule = par_lower.startswith('seedschedule')
         if par.name == "Login":
             self.Login()
         elif par.name == "Resetparameters":
             self.ResetParameters()
+        elif par.name == "Randomizeseeds":
+            self._randomize_seeds()
         elif par.name == "Active":
             if par.eval():
                 self.Start()
@@ -1481,7 +1618,7 @@ class DaydreamExt:
         elif par.name == "Model":
             self.params.update_controlnet_states()
             self.params.update_ipadapter_states()
-        elif par.name in hot_params or is_stepschedule:
+        elif par.name in hot_params or is_stepschedule or is_promptschedule or is_seedschedule:
             if par.name == 'Styleimage':
                 self.params.invalidate_style_cache()
             if self.state == "STREAMING" and self.stream_id:

@@ -25,6 +25,8 @@ def onPulse(par):
 		ext.Login()
 	elif par.name == "Resetparameters":
 		ext.ResetParameters()
+	elif par.name == "Randomizeseeds":
+		ext._randomize_seeds()
 	return
 
 def onExpressionChange(par, val, prev):
