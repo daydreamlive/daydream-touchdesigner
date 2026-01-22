@@ -40,7 +40,7 @@ PUBLIC_CONTRACT = {
         'login_started', 'login_success', 'login_failed',
         'stream_create_started', 'stream_created', 'stream_create_failed',
         'streaming_started', 'streaming_stopped',
-        'params_update_scheduled', 'params_update_sent', 'params_update_result',
+        'params_update_sent', 'params_update_result',
         'state_changed', 'error',
     ],
 }
@@ -1524,7 +1524,6 @@ class DaydreamExt:
 
     def _scheduleParamsUpdate(self, par_name):
         self._pending_changes.add(par_name)
-        self._emit('params_update_scheduled', {'param': par_name, 'pending': list(self._pending_changes)})
         if self._params_update_scheduled:
             return
         self._params_update_scheduled = True
@@ -1591,7 +1590,6 @@ class DaydreamExt:
         print("Daydream: Seeds randomized")
 
     def OnParameterChange(self, par):
-        print(f"Daydream: Parameter changed: {par.name} = {par.eval()}")
         hot_params = [
             'Negprompt', 'Guidance', 'Delta',
             'Depth', 'Canny', 'Tile', 'Hed', 'Openpose', 'Color',
