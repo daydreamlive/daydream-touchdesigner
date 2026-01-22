@@ -12,7 +12,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 API_TIMEOUT_CREATE = 15
 API_TIMEOUT_UPDATE = 10
