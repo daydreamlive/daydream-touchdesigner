@@ -20,16 +20,19 @@ Real-time AI image generation for TouchDesigner with Daydream
 
 ## Parameters
 
-| Parameter         | Description                                |
-| ----------------- | ------------------------------------------ |
-| Prompt            | Text description of desired output         |
-| Negative Prompt   | What to avoid in generation                |
-| Seed              | Randomization seed (-1 for random)         |
-| Guidance          | How closely to follow the prompt           |
-| Delta             | Strength of diffusion effect               |
-| Steps             | Number of inference steps                  |
-| ControlNet scales | Strength of each conditioning type         |
-| IP Adapter        | Enable style transfer from reference image |
+| Parameter              | Description                                          |
+| ---------------------- | ---------------------------------------------------- |
+| Prompt Schedule        | Weighted prompts `[(text, weight), ...]`             |
+| Prompt Interpolation   | Blending method for multiple prompts (linear/slerp)  |
+| Negative Prompt        | What to avoid in generation                          |
+| Seed Schedule          | Weighted seeds `[(seed, weight), ...]`               |
+| Seed Interpolation     | Blending method for multiple seeds (linear/slerp)    |
+| Randomize Seeds        | Set all seeds to random values                       |
+| Guidance               | How closely to follow the prompt                     |
+| Delta                  | Strength of diffusion effect                         |
+| Steps                  | Number of inference steps                            |
+| ControlNet scales      | Strength of each conditioning type                   |
+| IP Adapter             | Enable style transfer from reference image           |
 
 ## Integration API
 
@@ -49,7 +52,7 @@ PUBLIC_CONTRACT = {
         'login_started', 'login_success', 'login_failed',
         'stream_create_started', 'stream_created', 'stream_create_failed',
         'streaming_started', 'streaming_stopped',
-        'params_update_scheduled', 'params_update_sent', 'params_update_result',
+        'params_update_sent', 'params_update_result',
         'state_changed', 'error',
     ],
 }
@@ -102,7 +105,6 @@ ext.register_listener(on_event)
 | `stream_create_failed`    | `error`                                         |
 | `streaming_started`       | `whip_url`, `whep_url`, `model_id`              |
 | `streaming_stopped`       | `prev_stream_id`                                |
-| `params_update_scheduled` | `param`, `pending`                              |
 | `params_update_sent`      | `changed`, `params`                             |
 | `params_update_result`    | `success`, `error` (if failed)                  |
 | `state_changed`           | `from`, `to`, `reason`, `error` (if applicable) |
