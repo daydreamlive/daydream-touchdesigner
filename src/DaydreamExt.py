@@ -9,10 +9,12 @@ import socket
 import webbrowser
 import base64
 import random
+import time
 from concurrent.futures import ThreadPoolExecutor
 import threading
+from queue import Queue, Empty
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 
 API_TIMEOUT_CREATE = 15
 API_TIMEOUT_UPDATE = 10
@@ -946,13 +948,13 @@ class HTTPHandler:
                 with ext._whip_lock:
                     req_data['status'] = 'error'
                     req_data['error'] = err_body
-                run(f"op('{owner_path}').ext.Daydream._onWhipFailed()", delayFrames=1)
+                ext._callback_queue.put(('whip_failed', None))
             except Exception as e:
                 print(f"Daydream: WHIP proxy error: {e}")
                 with ext._whip_lock:
                     req_data['status'] = 'error'
                     req_data['error'] = str(e)
-                run(f"op('{owner_path}').ext.Daydream._onWhipFailed()", delayFrames=1)
+                ext._callback_queue.put(('whip_failed', None))
         ext._executor.submit(exchange_async)
         response['statusCode'] = 202
         response['statusReason'] = 'Accepted'
@@ -1057,7 +1059,7 @@ class HTTPHandler:
             self.ext._api_key = api_key
             self.ext._saveCredentials(api_key)
             print("Daydream: Login successful, API key saved")
-            run(f"op('{self.ext.ownerComp.path}').ext.Daydream._onLoginSuccess()", delayFrames=1)
+            self.ext._callback_queue.put(('login_success', None))
             response['statusCode'] = 302
             response['statusReason'] = 'Found'
             response['Location'] = 'https://app.daydream.live/sign-in/local/success'
@@ -1109,9 +1111,10 @@ class DaydreamExt:
         self._web_server = None
 
         self._executor = ThreadPoolExecutor(max_workers=EXECUTOR_MAX_WORKERS)
+        self._callback_queue = Queue()
         self._relay_html_cache = None
         self._pending_changes = set()
-        self._params_update_scheduled = False
+        self._params_last_send_time = 0
 
         self._loadCredentials()
         self.params.setup()
@@ -1334,8 +1337,8 @@ class DaydreamExt:
         frame_timer = self.ownerComp.op('frame_timer')
         if frame_timer:
             frame_timer.par.active = 0
-        self._params_update_scheduled = False
         self._pending_changes.clear()
+        self._params_last_send_time = 0
         web_server = self.ownerComp.op('web_server')
         if web_server:
             with self._ws_lock:
@@ -1426,15 +1429,14 @@ class DaydreamExt:
         self._executor.submit(self._createStreamAsync)
 
     def _createStreamAsync(self):
-        owner_path = self._start_params["owner_path"]
         try:
             params = self._start_params["params"]
             response = self.api.create_stream(model_id=self._start_params["model"], **params)
             self._pending_response = response
-            run(f"op('{owner_path}').ext.Daydream._onStreamCreated()", delayFrames=1)
+            self._callback_queue.put(('stream_created', None))
         except Exception as e:
             self._pending_error = str(e)
-            run(f"op('{owner_path}').ext.Daydream._onStreamCreateError()", delayFrames=1)
+            self._callback_queue.put(('stream_error', None))
 
     def _onStreamCreated(self):
         response = self._pending_response
@@ -1495,7 +1497,33 @@ class DaydreamExt:
     def OnWebSocketReceiveText(self, client, data):
         pass
 
+    def _process_callbacks(self):
+        while True:
+            try:
+                callback_type, data = self._callback_queue.get_nowait()
+            except Empty:
+                break
+            if callback_type == 'stream_created':
+                self._onStreamCreated()
+            elif callback_type == 'stream_error':
+                self._onStreamCreateError()
+            elif callback_type == 'whip_failed':
+                self._onWhipFailed()
+            elif callback_type == 'params_result':
+                self._onParamsUpdateResult(data)
+            elif callback_type == 'login_success':
+                self._onLoginSuccess()
+
+    def _check_params_trailing(self):
+        if not self._pending_changes:
+            return
+        now = time.time()
+        if now - self._params_last_send_time >= PARAMS_UPDATE_DELAY_MS / 1000.0:
+            self._doParamsUpdate()
+
     def OnTimerPulse(self):
+        self._process_callbacks()
+        self._check_params_trailing()
         with self._ws_lock:
             if self.state != "STREAMING" or not self.ws_clients:
                 return
@@ -1524,10 +1552,9 @@ class DaydreamExt:
 
     def _scheduleParamsUpdate(self, par_name):
         self._pending_changes.add(par_name)
-        if self._params_update_scheduled:
-            return
-        self._params_update_scheduled = True
-        run(f"op('{self.ownerComp.path}').ext.Daydream._doParamsUpdate()", delayMilliSeconds=PARAMS_UPDATE_DELAY_MS)
+        now = time.time()
+        if now - self._params_last_send_time >= PARAMS_UPDATE_DELAY_MS / 1000.0:
+            self._doParamsUpdate()
 
     def _sanitize_params_for_emit(self, params):
         sanitized = dict(params)
@@ -1539,13 +1566,13 @@ class DaydreamExt:
         return sanitized
 
     def _doParamsUpdate(self):
-        self._params_update_scheduled = False
         if self.state != "STREAMING" or not self.stream_id:
             return
         if not self._pending_changes:
             return
         changed = self._pending_changes.copy()
         self._pending_changes.clear()
+        self._params_last_send_time = time.time()
         params = self.params.build_changed_params(changed)
         if not params:
             return
@@ -1555,7 +1582,7 @@ class DaydreamExt:
         print(f"Daydream: Updating params (changed: {changed}): {sanitized}")
         self._emit('params_update_sent', {'changed': list(changed), 'params': sanitized})
         api = self.api
-        owner_path = self.ownerComp.path
+        callback_queue = self._callback_queue
         def update_async():
             error = None
             try:
@@ -1563,7 +1590,7 @@ class DaydreamExt:
             except Exception as e:
                 error = str(e)
                 print(f"Daydream Warning: Update failed. {e}")
-            run(f"op('{owner_path}').ext.Daydream._onParamsUpdateResult({repr(error)})", delayFrames=1)
+            callback_queue.put(('params_result', error))
         self._executor.submit(update_async)
 
     def _onParamsUpdateResult(self, error):
