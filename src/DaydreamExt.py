@@ -1,7 +1,4 @@
 import json
-import urllib.request
-import urllib.error
-import http.client
 import ssl
 import os
 import secrets
@@ -13,8 +10,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from queue import Queue, Empty
+import requests
+import urllib3
+import urllib3.util.connection as urllib3_cn
 
-VERSION = "0.2.2"
+urllib3_cn.allowed_gai_family = lambda: socket.AF_INET
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+VERSION = "0.2.3"
 
 API_TIMEOUT_CREATE = 15
 API_TIMEOUT_UPDATE = 10
@@ -46,51 +49,6 @@ PUBLIC_CONTRACT = {
         'state_changed', 'error',
     ],
 }
-
-
-def _create_ipv4_socket(host, port, timeout):
-    sock = None
-    for res in socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM):
-        af, socktype, proto, canonname, sa = res
-        try:
-            sock = socket.socket(af, socktype, proto)
-            sock.settimeout(timeout)
-            sock.connect(sa)
-            return sock
-        except OSError:
-            if sock:
-                sock.close()
-            sock = None
-    raise OSError(f"Failed to connect to {host}:{port} via IPv4")
-
-
-class IPv4HTTPConnection(http.client.HTTPConnection):
-    def connect(self):
-        self.sock = _create_ipv4_socket(self.host, self.port, self.timeout)
-        if self._tunnel_host:
-            self._tunnel()
-
-
-class IPv4HTTPSConnection(http.client.HTTPSConnection):
-    def connect(self):
-        sock = _create_ipv4_socket(self.host, self.port, self.timeout)
-        if self._tunnel_host:
-            self.sock = sock
-            self._tunnel()
-            server_hostname = self._tunnel_host
-        else:
-            server_hostname = self.host
-        self.sock = self._context.wrap_socket(sock, server_hostname=server_hostname)
-
-
-class IPv4HTTPHandler(urllib.request.HTTPHandler):
-    def http_open(self, req):
-        return self.do_open(IPv4HTTPConnection, req)
-
-
-class IPv4HTTPSHandler(urllib.request.HTTPSHandler):
-    def https_open(self, req):
-        return self.do_open(IPv4HTTPSConnection, req, context=self._context)
 
 
 CONTROLNET_SUPPORT = {
@@ -182,14 +140,14 @@ class DaydreamAPI:
 
     def __init__(self, token=None):
         self.token = token
-        self.ssl_ctx = ssl._create_unverified_context()
-        self._opener = urllib.request.build_opener(
-            IPv4HTTPHandler(),
-            IPv4HTTPSHandler(context=self.ssl_ctx)
-        )
+        self._session = requests.Session()
+        self._session.verify = False
 
     def set_token(self, token):
         self.token = token
+
+    def close(self):
+        self._session.close()
 
     def _get_headers(self):
         if not self.token:
@@ -206,16 +164,15 @@ class DaydreamAPI:
             "pipeline": "streamdiffusion",
             "params": {"model_id": model_id, **params}
         }
-        data = json.dumps(payload).encode('utf-8')
-        req = urllib.request.Request(url, data=data, headers=self._get_headers(), method="POST")
         try:
-            with self._opener.open(req, timeout=API_TIMEOUT_CREATE) as resp:
-                response_data = json.loads(resp.read().decode('utf-8'))
-                print(f"API: Stream created successfully. ID: {response_data.get('id')}")
-                return response_data
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode()
-            print(f"API Error {e.code}: {err_body}")
+            resp = self._session.post(url, json=payload, headers=self._get_headers(), timeout=API_TIMEOUT_CREATE)
+            resp.raise_for_status()
+            response_data = resp.json()
+            print(f"API: Stream created successfully. ID: {response_data.get('id')}")
+            return response_data
+        except requests.exceptions.HTTPError as e:
+            err_body = e.response.text if e.response else str(e)
+            print(f"API Error {e.response.status_code if e.response else 'N/A'}: {err_body}")
             raise e
         except Exception as e:
             print(f"API Connection Error: {e}")
@@ -230,11 +187,10 @@ class DaydreamAPI:
             "pipeline": "streamdiffusion",
             "params": {"model_id": model_id, **params}
         }
-        data = json.dumps(payload).encode('utf-8')
-        req = urllib.request.Request(url, data=data, headers=self._get_headers(), method="PATCH")
         try:
-            with self._opener.open(req, timeout=API_TIMEOUT_UPDATE) as resp:
-                return True
+            resp = self._session.patch(url, json=payload, headers=self._get_headers(), timeout=API_TIMEOUT_UPDATE)
+            resp.raise_for_status()
+            return True
         except Exception as e:
             print(f"API Update Error: {e}")
             return False
@@ -243,12 +199,11 @@ class DaydreamAPI:
         headers = {"Content-Type": "application/sdp"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        data = offer_sdp.encode('utf-8')
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
-            with self._opener.open(req, timeout=timeout) as resp:
-                return resp.read().decode('utf-8'), dict(resp.getheaders())
-        except urllib.error.HTTPError as e:
+            resp = self._session.post(url, data=offer_sdp.encode('utf-8'), headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            return resp.text, dict(resp.headers)
+        except requests.exceptions.HTTPError as e:
             raise e
         except Exception as e:
             print(f"API SDP Exchange Error: {e}")
@@ -257,15 +212,14 @@ class DaydreamAPI:
     def create_api_key(self, jwt_token, name="TouchDesigner", user_type="touchdesigner"):
         url = f"{self.BASE_URL}/api-key"
         payload = {"name": name, "user_type": user_type}
-        data = json.dumps(payload).encode('utf-8')
         headers = {"Authorization": f"Bearer {jwt_token}", "Content-Type": "application/json", "x-client-source": "touchdesigner"}
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
-            with self._opener.open(req, timeout=API_TIMEOUT_UPDATE) as resp:
-                return json.loads(resp.read().decode('utf-8')).get('apiKey')
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode()
-            print(f"API Error creating key {e.code}: {err_body}")
+            resp = self._session.post(url, json=payload, headers=headers, timeout=API_TIMEOUT_UPDATE)
+            resp.raise_for_status()
+            return resp.json().get('apiKey')
+        except requests.exceptions.HTTPError as e:
+            err_body = e.response.text if e.response else str(e)
+            print(f"API Error creating key {e.response.status_code if e.response else 'N/A'}: {err_body}")
             raise e
 
 
@@ -942,9 +896,9 @@ class HTTPHandler:
                 with ext._whip_lock:
                     req_data['answer'] = answer_sdp
                     req_data['status'] = 'ready'
-            except urllib.error.HTTPError as e:
-                err_body = e.read().decode() if hasattr(e, 'read') else str(e)
-                print(f"Daydream: WHIP proxy error {e.code}: {err_body}")
+            except requests.exceptions.HTTPError as e:
+                err_body = e.response.text if e.response else str(e)
+                print(f"Daydream: WHIP proxy error {e.response.status_code if e.response else 'N/A'}: {err_body}")
                 with ext._whip_lock:
                     req_data['status'] = 'error'
                     req_data['error'] = err_body
@@ -1012,7 +966,7 @@ class HTTPHandler:
                 with ext._whep_lock:
                     req_data['answer'] = answer_sdp
                     req_data['status'] = 'ready'
-            except urllib.error.HTTPError:
+            except requests.exceptions.HTTPError:
                 with ext._whep_lock:
                     req_data['status'] = 'error'
                     req_data['error'] = 'WHEP not ready'
@@ -1658,6 +1612,7 @@ class DaydreamExt:
         print(f"Daydream Message: {msg}")
 
     def Destroy(self):
+        self.api.close()
         self._executor.shutdown(wait=False)
 
 
