@@ -1,4 +1,5 @@
 import { SDP_ORIGIN, WHIP_PROXY, WHEP_PROXY } from "./config";
+import { ws } from "./websocket";
 import {
   DEFAULT_ICE_SERVERS,
   DEFAULT_VIDEO_BITRATE,
@@ -967,7 +968,24 @@ export class RelayManager {
       this.videoStarted = true;
       console.log("[Relay] Video playing");
       this.onVideoStarted?.();
+      this.startFpsCounter();
     }
+  }
+
+  private startFpsCounter(): void {
+    let frameCount = 0;
+    const countFrame = () => {
+      frameCount++;
+      this.video.requestVideoFrameCallback(countFrame);
+    };
+    this.video.requestVideoFrameCallback(countFrame);
+
+    setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "fps", output_fps: frameCount }));
+      }
+      frameCount = 0;
+    }, 1000);
   }
 
   async stop(): Promise<void> {

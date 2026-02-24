@@ -1,7 +1,7 @@
 import { WS_URL } from "./config";
 import { queueFrame } from "./decoder";
 
-let ws: WebSocket | null = null;
+export let ws: WebSocket | null = null;
 
 export function connectWebSocket(): void {
   ws = new WebSocket(WS_URL);
