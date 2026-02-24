@@ -75,6 +75,8 @@ CONTROLNET_SUPPORT = {
         "tile": ("lllyasviel/control_v11f1e_sd15_tile", "feedback"),
     },
 }
+CONTROLNET_SUPPORT['sdxl-v2v'] = CONTROLNET_SUPPORT['stabilityai/sdxl-turbo']
+CONTROLNET_SUPPORT['sd15-v2v'] = CONTROLNET_SUPPORT['Lykon/dreamshaper-8']
 
 CONTROLNET_PARAM_MAP = {
     "depth": "Depth",
@@ -96,6 +98,17 @@ IP_ADAPTER_SUPPORT = {
     "Lykon/dreamshaper-8": {"regular"},
     "prompthero/openjourney-v4": {"regular"},
 }
+IP_ADAPTER_SUPPORT['sdxl-v2v'] = IP_ADAPTER_SUPPORT['stabilityai/sdxl-turbo']
+IP_ADAPTER_SUPPORT['sd15-v2v'] = IP_ADAPTER_SUPPORT['Lykon/dreamshaper-8']
+
+MODEL_PIPELINE_MAP = {
+    'stabilityai/sdxl-turbo':    ('streamdiffusion', 'stabilityai/sdxl-turbo'),
+    'stabilityai/sd-turbo':      ('streamdiffusion', 'stabilityai/sd-turbo'),
+    'Lykon/dreamshaper-8':       ('streamdiffusion', 'Lykon/dreamshaper-8'),
+    'prompthero/openjourney-v4': ('streamdiffusion', 'prompthero/openjourney-v4'),
+    'sdxl-v2v':                  ('streamdiffusion-sdxl-v2v', 'stabilityai/sdxl-turbo'),
+    'sd15-v2v':                  ('streamdiffusion-sd15-v2v', 'Lykon/dreamshaper-8'),
+}
 
 ALL_WATCHED_PARAMS = [
     "Login", "Resetparameters", "Active", "Model", "Negprompt",
@@ -103,6 +116,7 @@ ALL_WATCHED_PARAMS = [
     "Noise", "Width", "Height",
     "Depth", "Canny", "Tile", "Hed", "Openpose", "Color",
     "Ipadapter", "Ipadapterscale", "Styleimage", "Ipadaptertype",
+    "Camaxframes", "Cainterval",
     "Promptschedule*", "Seedschedule*",
     "Promptinterpolation", "Normalizepromptweights",
     "Seedinterpolation", "Normalizeseedweights", "Randomizeseeds",
@@ -132,6 +146,8 @@ PARAM_DEFAULTS = {
     'Normalizepromptweights': True,
     'Seedinterpolation': 'slerp',
     'Normalizeseedweights': True,
+    'Camaxframes': 2,
+    'Cainterval': 2,
 }
 
 
@@ -158,10 +174,10 @@ class DaydreamAPI:
             "x-client-source": "touchdesigner",
         }
 
-    def create_stream(self, model_id="stabilityai/sdxl-turbo", **params):
+    def create_stream(self, pipeline="streamdiffusion", model_id="stabilityai/sdxl-turbo", **params):
         url = f"{self.BASE_URL}/streams"
         payload = {
-            "pipeline": "streamdiffusion",
+            "pipeline": pipeline,
             "params": {"model_id": model_id, **params}
         }
         try:
@@ -178,13 +194,13 @@ class DaydreamAPI:
             print(f"API Connection Error: {e}")
             raise e
 
-    def update_stream(self, stream_id, model_id, **params):
+    def update_stream(self, stream_id, pipeline="streamdiffusion", model_id=None, **params):
         if not stream_id or not model_id:
             print("API Warning: Missing stream_id or model_id for update")
             return
         url = f"{self.BASE_URL}/streams/{stream_id}"
         payload = {
-            "pipeline": "streamdiffusion",
+            "pipeline": pipeline,
             "params": {"model_id": model_id, **params}
         }
         try:
@@ -352,6 +368,26 @@ class ParameterManager:
         return self._get('Model', 'stabilityai/sdxl-turbo')
 
     @property
+    def Camaxframes(self):
+        return self._get_int('Camaxframes', 2)
+
+    @property
+    def Cainterval(self):
+        return self._get_int('Cainterval', 2)
+
+    @property
+    def is_v2v(self):
+        return self.Model in ('sdxl-v2v', 'sd15-v2v')
+
+    @property
+    def pipeline_string(self):
+        return MODEL_PIPELINE_MAP.get(self.Model, ('streamdiffusion', self.Model))[0]
+
+    @property
+    def actual_model_id(self):
+        return MODEL_PIPELINE_MAP.get(self.Model, ('streamdiffusion', self.Model))[1]
+
+    @property
     def Active(self):
         return self._get_bool('Active', False)
 
@@ -490,10 +526,23 @@ class ParameterManager:
         self._create_ipadapter_type_param(params)
         params.appendStr('Styleimage', label='Style Image')
 
+        params.appendHeader('Cachedattention', label='Cached Attention (V2V)')
+        self._create_cached_attention_params(params)
+
     def _create_model_param(self, page):
         p = page.appendMenu('Model', label='Model')[0]
-        p.menuNames = ['stabilityai/sdxl-turbo', 'stabilityai/sd-turbo', 'Lykon/dreamshaper-8', 'prompthero/openjourney-v4']
-        p.menuLabels = ['SDXL Turbo', 'SD Turbo', 'Dreamshaper 8', 'Openjourney v4']
+        p.menuNames = [
+            'stabilityai/sdxl-turbo', 'sdxl-v2v',
+            'stabilityai/sd-turbo',
+            'Lykon/dreamshaper-8', 'sd15-v2v',
+            'prompthero/openjourney-v4',
+        ]
+        p.menuLabels = [
+            'SDXL Turbo', 'SDXL V2V',
+            'SD Turbo',
+            'Dreamshaper 8', 'SD1.5 V2V',
+            'Openjourney v4',
+        ]
         p.default = p.val = 'stabilityai/sdxl-turbo'
 
     def _create_guidance_param(self, page):
@@ -570,6 +619,16 @@ class ParameterManager:
         p.menuLabels = ['Regular', 'FaceID']
         p.default = p.val = 'regular'
 
+    def _create_cached_attention_params(self, page):
+        p = page.appendInt('Camaxframes', label='Max Frames')[0]
+        p.default = p.val = 2
+        p.min, p.max = 1, 4
+        p.clampMin = p.clampMax = True
+        p = page.appendInt('Cainterval', label='Interval (frames)')[0]
+        p.default = p.val = 2
+        p.min, p.max = 1, 240
+        p.clampMin = p.clampMax = True
+
     def _create_prompt_interpolation_params(self, page):
         p = page.appendMenu('Promptinterpolation', label='Prompt Interpolation')[0]
         p.menuNames = ['linear', 'slerp']
@@ -603,6 +662,7 @@ class ParameterManager:
             'Guidance', 'Delta', 'Steps', 'Stepschedule', 'Width', 'Height',
             'Depth', 'Canny', 'Tile', 'Hed', 'Openpose', 'Color',
             'Ipadapter', 'Ipadapterscale', 'Ipadaptertype', 'Styleimage',
+            'Camaxframes', 'Cainterval',
             'Promptinterpolation', 'Normalizepromptweights',
             'Seedinterpolation', 'Normalizeseedweights', 'Randomizeseeds',
         ]
@@ -631,6 +691,7 @@ class ParameterManager:
             return
         self.update_controlnet_states()
         self.update_ipadapter_states()
+        self.update_v2v_states()
 
     def update_controlnet_states(self):
         model = self.Model
@@ -657,9 +718,16 @@ class ParameterManager:
             if not has_faceid:
                 par.Ipadaptertype.val = 'regular'
 
+    def update_v2v_states(self):
+        is_v2v = self.is_v2v
+        par = self.ownerComp.par
+        for par_name in ['Camaxframes', 'Cainterval']:
+            if hasattr(par, par_name):
+                getattr(par, par_name).enable = is_v2v
+
     def update_cold_states(self, is_streaming):
         par = self.ownerComp.par
-        cold_params = ['Resetparameters', 'Model', 'Width', 'Height', 'Steps', 'Noise', 'Ipadaptertype']
+        cold_params = ['Resetparameters', 'Model', 'Width', 'Height', 'Steps', 'Noise', 'Ipadaptertype', 'Camaxframes', 'Cainterval']
         for par_name in cold_params:
             if hasattr(par, par_name):
                 getattr(par, par_name).enable = not is_streaming
@@ -759,6 +827,12 @@ class ParameterManager:
             params["width"] = self.Width
             params["height"] = self.Height
             params["num_inference_steps"] = self.Steps
+        if self.is_v2v and not for_update:
+            params["cached_attention"] = {
+                "enabled": True,
+                "max_frames": self.Camaxframes,
+                "interval": self.Cainterval,
+            }
         return params
 
     def build_changed_params(self, changed):
@@ -1146,6 +1220,7 @@ class DaydreamExt:
             'supported_models': list(CONTROLNET_SUPPORT.keys()),
             'controlnets': list(CONTROLNET_SUPPORT.get(model, {}).keys()),
             'ip_adapter_types': list(IP_ADAPTER_SUPPORT.get(model, set())),
+            'v2v': self.params.is_v2v,
         }
 
     def _allocate_ports(self):
@@ -1376,7 +1451,8 @@ class DaydreamExt:
         self.api.set_token(self.ApiToken)
         params = self.params.build_params(for_update=False)
         self._start_params = {
-            "model": self.params.Model,
+            "model": self.params.actual_model_id,
+            "pipeline": self.params.pipeline_string,
             "params": params,
             "owner_path": self.ownerComp.path
         }
@@ -1385,7 +1461,11 @@ class DaydreamExt:
     def _createStreamAsync(self):
         try:
             params = self._start_params["params"]
-            response = self.api.create_stream(model_id=self._start_params["model"], **params)
+            response = self.api.create_stream(
+                pipeline=self._start_params["pipeline"],
+                model_id=self._start_params["model"],
+                **params
+            )
             self._pending_response = response
             self._callback_queue.put(('stream_created', None))
         except Exception as e:
@@ -1540,7 +1620,7 @@ class DaydreamExt:
         def update_async():
             error = None
             try:
-                api.update_stream(stream_id, model_id=model_id, **params)
+                api.update_stream(stream_id, pipeline=self.params.pipeline_string, model_id=model_id, **params)
             except Exception as e:
                 error = str(e)
                 print(f"Daydream Warning: Update failed. {e}")
@@ -1597,6 +1677,7 @@ class DaydreamExt:
         elif par.name == "Model":
             self.params.update_controlnet_states()
             self.params.update_ipadapter_states()
+            self.params.update_v2v_states()
         elif par.name in hot_params or is_stepschedule or is_promptschedule or is_seedschedule:
             if par.name == 'Styleimage':
                 self.params.invalidate_style_cache()
