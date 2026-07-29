@@ -31,6 +31,11 @@ JPEG_QUALITY_STREAM = 0.7
 MAX_STYLE_IMAGE_SIZE = 50 * 1024 * 1024
 
 EXECUTOR_MAX_WORKERS = 4
+
+# An account with no credits fails WHIP every time, so an unbounded reconnect
+# loop just hammers the API. Give real transient failures a few tries, then
+# stop and say why.
+MAX_WHIP_RETRIES = 5
 PARAMS_UPDATE_DELAY_MS = 100
 
 PUBLIC_CONTRACT = {
@@ -151,6 +156,11 @@ PARAM_DEFAULTS = {
 }
 
 
+class DaydreamCreditsError(Exception):
+    """The account cannot stream: no credits, no subscription, or suspended."""
+    pass
+
+
 class DaydreamAPI:
     BASE_URL = "https://api.daydream.live/v1"
 
@@ -189,10 +199,35 @@ class DaydreamAPI:
         except requests.exceptions.HTTPError as e:
             err_body = e.response.text if e.response else str(e)
             print(f"API Error {e.response.status_code if e.response else 'N/A'}: {err_body}")
+            credits_error = self._credits_error(e.response)
+            if credits_error:
+                raise DaydreamCreditsError(credits_error) from e
             raise e
         except Exception as e:
             print(f"API Connection Error: {e}")
             raise e
+
+    @staticmethod
+    def _credits_error(response):
+        """User-facing message if this response is a billing refusal, else None.
+
+        402 is the API's insufficient-credits status; 403 with a BILLING/ or
+        AUTH/SUSPENDED code covers the account-level refusals. Anything else
+        stays a generic HTTP error.
+        """
+        if response is None:
+            return None
+        try:
+            body = response.json()
+        except Exception:
+            body = {}
+        code = str(body.get("code") or "")
+        message = body.get("userFriendlyMessage") or body.get("message")
+        if response.status_code == 402 or code.startswith("BILLING/"):
+            return message or "Out of credits. Add credits or subscribe to keep streaming."
+        if code == "AUTH/SUSPENDED":
+            return message or "This account is suspended."
+        return None
 
     def update_stream(self, stream_id, pipeline="streamdiffusion", model_id=None, **params):
         if not stream_id or not model_id:
@@ -1151,6 +1186,9 @@ class DaydreamExt:
         self._pending_changes = set()
         self._params_last_send_time = 0
 
+        self._whip_failures = 0
+        self._pending_error_is_billing = False
+
         self._input_frame_count = 0
         self._input_fps = 0.0
         self._output_fps = 0.0
@@ -1389,6 +1427,8 @@ class DaydreamExt:
         if self.state == "CREATING":
             print("Daydream: Stream is being created, please wait...")
             return
+        # A user pressing Start is asking for a fresh set of retries.
+        self._whip_failures = 0
         self._web_server = self.ownerComp.op('web_server')
         self._setupWebRender()
         frame_timer = self.ownerComp.op('frame_timer')
@@ -1509,11 +1549,17 @@ class DaydreamExt:
             )
             self._pending_response = response
             self._callback_queue.put(('stream_created', None))
+        except DaydreamCreditsError as e:
+            self._pending_error = str(e)
+            self._pending_error_is_billing = True
+            self._callback_queue.put(('stream_error', None))
         except Exception as e:
             self._pending_error = str(e)
+            self._pending_error_is_billing = False
             self._callback_queue.put(('stream_error', None))
 
     def _onStreamCreated(self):
+        self._whip_failures = 0
         response = self._pending_response
         self.stream_id = response.get("id")
         self.whip_url = response.get("whip_url")
@@ -1534,21 +1580,41 @@ class DaydreamExt:
 
     def _onStreamCreateError(self):
         err = self._pending_error
+        is_billing = getattr(self, '_pending_error_is_billing', False)
+        context = 'credits' if is_billing else 'stream_create'
         print(f"Daydream Error: Failed to create stream. {err}")
         self._resetStreamState(reason="stream_create_failed")
         self._set_state("ERROR", reason="stream_create_failed", error=err)
-        self._emit('stream_create_failed', {'error': err})
-        self._emit('error', {'error': err, 'context': 'stream_create'})
-        self.UpdateStatusText(f"Error: {err}")
+        self._emit('stream_create_failed', {'error': err, 'context': context})
+        self._emit('error', {'error': err, 'context': context})
+        # A billing refusal is already a sentence; a transport error is not.
+        self.UpdateStatusText(err if is_billing else f"Error: {err}")
         if hasattr(self.ownerComp.par, 'Active'):
             self.ownerComp.par.Active.val = False
 
     def _onWhipFailed(self):
-        print("Daydream: WHIP failed, recreating stream...")
-        self._emit('error', {'error': 'WHIP connection failed', 'context': 'whip', 'will_retry': self.Active})
+        self._whip_failures += 1
+        # The gateway drops the ingest when the account runs out of credits,
+        # which looks exactly like a transient WHIP failure from here. Retrying
+        # forever turns that into a reconnect loop, so give up after a few.
+        give_up = self._whip_failures >= MAX_WHIP_RETRIES
+        will_retry = self.Active and not give_up
+        print(f"Daydream: WHIP failed ({self._whip_failures}/{MAX_WHIP_RETRIES})"
+              + (", recreating stream..." if will_retry else ", giving up."))
+        self._emit('error', {'error': 'WHIP connection failed', 'context': 'whip',
+                             'will_retry': will_retry, 'attempts': self._whip_failures})
         self._resetStreamState(reason="whip_failed")
-        if self.Active:
+        if will_retry:
             self._createStream()
+            return
+        if give_up:
+            msg = ("Stream keeps disconnecting. If your account is out of "
+                   "credits, add credits or subscribe to continue.")
+            self._whip_failures = 0
+            self._set_state("ERROR", reason="whip_failed", error=msg)
+            self.UpdateStatusText(msg)
+            if hasattr(self.ownerComp.par, 'Active'):
+                self.ownerComp.par.Active.val = False
 
     def _startWebRTC(self):
         print("Daydream: Stream ready, WebRTC can connect...")
