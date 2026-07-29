@@ -605,7 +605,7 @@ class ParameterManager:
 
     def _create_resolution_param(self, page, name):
         p = page.appendMenu(name, label=name)[0]
-        p.menuNames = p.menuLabels = ['512', '448', '384', '320', '256', '192', '128', '64']
+        p.menuNames = p.menuLabels = ['1024', '960', '896', '832', '768', '704', '640', '576', '512', '448', '384']
         p.default = p.val = '512'
 
     def _create_controlnet_param(self, page, par_name):
